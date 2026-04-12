@@ -8,6 +8,7 @@ struct ProcessData {
     QString name;
     double memUsageMB = 0.0;
     double cpuUsagePercent = 0.0;
+    bool isSystem = false;
 };
 
 

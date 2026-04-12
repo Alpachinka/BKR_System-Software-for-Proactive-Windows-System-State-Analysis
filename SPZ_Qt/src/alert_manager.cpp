@@ -2,6 +2,8 @@
 #include <QIcon>
 #include <QApplication>
 #include <QStyle>
+#include <QMenu>
+#include <QAction>
 
 AlertManager::AlertManager(Database* db, RecommendEngine* recommender, QObject* parent)
     : QObject(parent), m_db(db), m_recommender(recommender)
@@ -10,7 +12,22 @@ AlertManager::AlertManager(Database* db, RecommendEngine* recommender, QObject* 
     // Використовуємо стандартну іконку системи
     m_trayIcon->setIcon(QApplication::style()->standardIcon(QStyle::SP_ComputerIcon));
     m_trayIcon->setToolTip("SPZ System Monitor");
+    
+    QMenu* trayMenu = new QMenu();
+    QAction* openAction = trayMenu->addAction("Розгорнути (Open)");
+    connect(openAction, &QAction::triggered, this, &AlertManager::showMainWindowRequested);
+    
+    QAction* exitAction = trayMenu->addAction("Вийти (Exit)");
+    connect(exitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+
+    m_trayIcon->setContextMenu(trayMenu);
     m_trayIcon->show();
+
+    connect(m_trayIcon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+        if (reason == QSystemTrayIcon::DoubleClick) {
+            emit showMainWindowRequested();
+        }
+    });
 }
 
 AlertManager::~AlertManager()

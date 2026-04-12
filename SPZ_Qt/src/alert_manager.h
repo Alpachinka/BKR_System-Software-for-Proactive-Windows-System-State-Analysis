@@ -34,11 +34,15 @@ public slots:
 signals:
     // Сигнал для оновлення UI
     void alertsChanged();
+    
+    // Сигнал для відкриття головного вікна
+    void showMainWindowRequested();
 
 private:
     Database* m_db;
     RecommendEngine* m_recommender;
     QSystemTrayIcon* m_trayIcon;
+    QMenu* m_trayMenu; // New context menu
 
     QList<Anomaly> m_activeAnomalies;
     QMap<QString, Recommendation> m_recommendations;

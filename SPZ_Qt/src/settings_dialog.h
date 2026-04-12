@@ -3,6 +3,8 @@
 #include <QDialog>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QComboBox>
+#include <QCheckBox>
 #include <QPushButton>
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -38,6 +40,9 @@ private:
     
     QSpinBox*       m_cooldownSecs;
     QSpinBox*       m_chartHistory;
+    QComboBox*      m_appTheme;
+    QComboBox*      m_processPromptLevel;
+    QCheckBox*      m_showTrustLevel;
 
     void setupUI();
     void loadFromManager();

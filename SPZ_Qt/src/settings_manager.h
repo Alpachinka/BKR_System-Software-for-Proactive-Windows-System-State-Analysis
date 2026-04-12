@@ -26,6 +26,9 @@ public:
     int baselineWindow;       // 3600
 
     int chartHistory;         // 60
+    QString appTheme;         // "dark" or "light"
+    int processPromptLevel;   // 0=All, 1=System Only, 2=None
+    bool showTrustLevel;      // true/false
 
 signals:
     void settingsChanged();

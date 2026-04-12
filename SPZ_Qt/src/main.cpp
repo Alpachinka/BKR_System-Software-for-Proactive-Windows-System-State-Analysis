@@ -65,6 +65,11 @@ int main(int argc, char *argv[]) {
     
     RegisterDeviceNotification(reinterpret_cast<HANDLE>(window.winId()), &NotificationFilter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
+    QObject::connect(&alertManager, &AlertManager::showMainWindowRequested, &window, [&window]() {
+        window.showNormal();
+        window.activateWindow();
+    });
+
     window.show();
     int result = app.exec();
 

@@ -131,6 +131,19 @@ void Backend::activeProcessLoop()
                 CloseHandle(hProc);
             }
 
+            QString lowerName = info.name.toLower();
+            info.isSystem = lowerName.startsWith("svchost") || 
+                           lowerName == "system" || 
+                           lowerName == "registry" ||
+                           lowerName == "smss.exe" ||
+                           lowerName == "csrss.exe" ||
+                           lowerName == "wininit.exe" ||
+                           lowerName == "services.exe" ||
+                           lowerName == "lsass.exe" ||
+                           lowerName == "winlogon.exe" ||
+                           lowerName == "dwm.exe" ||
+                           lowerName == "explorer.exe";
+
             result.push_back(std::move(info));
 
         } while (Process32NextW(hSnap, &pe));
@@ -392,4 +405,48 @@ HRESULT STDMETHODCALLTYPE ModernNetworkEventsHandler::ConnectivityChanged(
         QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
         "Зміна мережі", status);
     return S_OK;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Process Actions (Suspend / Resume / Terminate)
+// ─────────────────────────────────────────────────────────────────────────
+
+typedef LONG (NTAPI *NtSuspendProcess)(IN HANDLE ProcessHandle);
+typedef LONG (NTAPI *NtResumeProcess)(IN HANDLE ProcessHandle);
+
+bool Backend::suspendProcess(DWORD pid)
+{
+    HANDLE hProc = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, pid);
+    if (!hProc) return false;
+
+    auto suspend = (NtSuspendProcess)GetProcAddress(GetModuleHandleA("ntdll"), "NtSuspendProcess");
+    bool result = false;
+    if (suspend) {
+        result = (suspend(hProc) == 0);
+    }
+    CloseHandle(hProc);
+    return result;
+}
+
+bool Backend::resumeProcess(DWORD pid)
+{
+    HANDLE hProc = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, pid);
+    if (!hProc) return false;
+
+    auto resume = (NtResumeProcess)GetProcAddress(GetModuleHandleA("ntdll"), "NtResumeProcess");
+    bool result = false;
+    if (resume) {
+        result = (resume(hProc) == 0);
+    }
+    CloseHandle(hProc);
+    return result;
+}
+
+bool Backend::terminateProcess(DWORD pid)
+{
+    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (!hProc) return false;
+    bool result = TerminateProcess(hProc, 1);
+    CloseHandle(hProc);
+    return result;
 }

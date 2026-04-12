@@ -43,6 +43,8 @@ private slots:
     void updateHealthScore(int score);
     void ackAllAnomalies();
 
+    void showProcessContextMenu(const QPoint& pos);
+
 private:
     Backend* m_backend;
     AlertManager* m_alerts;

@@ -37,6 +37,14 @@ public:
 
     void startMonitoring();
 
+    // Windows API Device Changes
+    void handleDeviceChange(UINT eventType, DWORD_PTR data);
+
+    // Process Actions
+    bool suspendProcess(DWORD pid);
+    bool resumeProcess(DWORD pid);
+    bool terminateProcess(DWORD pid);
+
 signals:
     void processesUpdated(const std::vector<ProcessData>& processes);
     void systemInfoUpdated(const SystemData& sysData);

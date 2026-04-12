@@ -22,6 +22,10 @@ void SettingsManager::resetToDefaults()
     minSamples        = 300;
     baselineWindow    = 3600;
     chartHistory      = 60;
+    
+    appTheme          = "dark";
+    processPromptLevel= 1; // 1 = Important/System only
+    showTrustLevel    = true;
 }
 
 void SettingsManager::load()
@@ -48,6 +52,9 @@ void SettingsManager::load()
 
     settings.beginGroup("UI");
     chartHistory      = settings.value("chartHistory", 60).toInt();
+    appTheme          = settings.value("appTheme", "dark").toString();
+    processPromptLevel= settings.value("processPromptLevel", 1).toInt();
+    showTrustLevel    = settings.value("showTrustLevel", true).toBool();
     settings.endGroup();
 }
 
@@ -75,6 +82,9 @@ void SettingsManager::save()
 
     settings.beginGroup("UI");
     settings.setValue("chartHistory", chartHistory);
+    settings.setValue("appTheme", appTheme);
+    settings.setValue("processPromptLevel", processPromptLevel);
+    settings.setValue("showTrustLevel", showTrustLevel);
     settings.endGroup();
 
     emit settingsChanged();

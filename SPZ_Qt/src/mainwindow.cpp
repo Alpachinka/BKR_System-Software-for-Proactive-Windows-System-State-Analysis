@@ -8,6 +8,8 @@
 #include <QMessageBox>
 #include <QFile>
 #include <QTextStream>
+#include <QMenu>
+#include <QAction>
 #include <QDir>
 #include <QDateTime>
 #include <windows.h>
@@ -23,6 +25,12 @@ MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* an
 {
     setupUI();
     applyModernStyle();
+
+    // Connect Settings changed signal to re-apply style and table headers
+    connect(m_settings, &SettingsManager::settingsChanged, this, [this]() {
+        applyModernStyle();
+        m_processTable->setColumnHidden(3, !m_settings->showTrustLevel);
+    });
 
     connect(m_backend, &Backend::processesUpdated,  this, &MainWindow::updateProcesses);
     connect(m_backend, &Backend::systemInfoUpdated, this, &MainWindow::updateSystemInfo);
@@ -115,16 +123,12 @@ QWidget* MainWindow::buildAnomaliesTab()
     auto* topBar = new QHBoxLayout();
     m_healthScoreLabel = new QLabel("Health Score: 100/100", this);
     m_healthScoreLabel->setStyleSheet("font-weight: bold; color: #a5d6a7; font-size: 14px;");
-    
-    auto* btnSettings = new QPushButton("⚙️ Налаштування", this);
-    connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
 
     auto* btnAckAll = new QPushButton("Прийняти всі", this);
     connect(btnAckAll, &QPushButton::clicked, this, &MainWindow::ackAllAnomalies);
 
     topBar->addWidget(m_healthScoreLabel);
     topBar->addStretch();
-    topBar->addWidget(btnSettings);
     topBar->addWidget(btnAckAll);
     lay->addLayout(topBar);
 
@@ -196,13 +200,26 @@ void MainWindow::setupUI()
     mainLay->addWidget(m_tabWidget, 1);
 
     // Tab 0: Processes
-    m_processTable = new QTableWidget(0, 3, this);
-    m_processTable->setHorizontalHeaderLabels({"Ім'я процесу", "Пам'ять (МБ)", "CPU (%)"});
+    m_processTable = new QTableWidget(0, 4, this);
+    m_processTable->setHorizontalHeaderLabels({"Ім'я процесу", "Пам'ять (МБ)", "CPU (%)", "Довіра"});
     m_processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_processTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_processTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_processTable->setSortingEnabled(true);
+    m_processTable->setColumnHidden(3, !m_settings->showTrustLevel);
+
+    // Context Menu for Process Table
+    m_processTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_processTable, &QTableWidget::customContextMenuRequested, this, &MainWindow::showProcessContextMenu);
+
     m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
+
+    // Corner widget for Settings
+    auto* btnSettings = new QPushButton("⚙️", this);
+    btnSettings->setToolTip("Налаштування програми");
+    btnSettings->setFixedSize(30, 30);
+    connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
+    m_tabWidget->setCornerWidget(btnSettings, Qt::TopRightCorner);
 
     // Tab 1: Anomalies and Recommendations (NEW)
     m_tabWidget->addTab(buildAnomaliesTab(), "Аномалії та Поради");
@@ -267,6 +284,7 @@ void MainWindow::updateProcesses(const std::vector<ProcessData>& procs)
     for (int i = 0; i < static_cast<int>(procs.size()); ++i) {
         const auto& p = procs[i];
         auto* nameItem = new QTableWidgetItem(p.name);
+        nameItem->setData(Qt::UserRole, static_cast<qulonglong>(p.pid));
         auto* memItem  = new QTableWidgetItem(
             QString::number(p.memUsageMB, 'f', 2) + " МБ");
         auto* cpuItem  = new QTableWidgetItem(
@@ -276,9 +294,15 @@ void MainWindow::updateProcesses(const std::vector<ProcessData>& procs)
         memItem->setData(Qt::UserRole, p.memUsageMB);
         cpuItem->setData(Qt::UserRole, p.cpuUsagePercent);
 
+        auto* itemTrust = new QTableWidgetItem();
+        itemTrust->setText(p.isSystem ? "Системний" : "Користувацький");
+        if (p.isSystem) itemTrust->setForeground(QBrush(QColor("#4fc3f7")));
+        else itemTrust->setForeground(QBrush(Qt::white));
+
         m_processTable->setItem(i, 0, nameItem);
         m_processTable->setItem(i, 1, memItem);
         m_processTable->setItem(i, 2, cpuItem);
+        m_processTable->setItem(i, 3, itemTrust);
     }
     m_processTable->setSortingEnabled(true);
 }
@@ -461,6 +485,48 @@ void MainWindow::showSettingsDialog()
 {
     SettingsDialog dlg(m_settings, this);
     dlg.exec();
+}
+
+void MainWindow::showProcessContextMenu(const QPoint& pos)
+{
+    QTableWidgetItem* item = m_processTable->itemAt(pos);
+    if (!item) return;
+
+    int row = item->row();
+    QString processName = m_processTable->item(row, 0)->text();
+    bool isSystem = (m_processTable->item(row, 3)->text() == "Системний");
+
+    DWORD pid = m_processTable->item(row, 0)->data(Qt::UserRole).toUInt();
+    if (pid == 0) return;
+
+    QMenu menu(this);
+    QAction* actSuspend = menu.addAction("Призупинити (Suspend)");
+    QAction* actResume = menu.addAction("Відновити (Resume)");
+    QAction* actTerminate = menu.addAction("Завершити (Terminate)");
+
+    QAction* selected = menu.exec(m_processTable->viewport()->mapToGlobal(pos));
+
+    if (!selected) return;
+
+    // Check Prompt Level
+    bool needsPrompt = false;
+    if (m_settings->processPromptLevel == 0) needsPrompt = true; // All
+    else if (m_settings->processPromptLevel == 1 && isSystem) needsPrompt = true; // Important only
+
+    if (needsPrompt) {
+        QMessageBox::StandardButton reply = QMessageBox::warning(this, "Підтвердження",
+            QString("Ви впевнені, що хочете виконати цю дію над процесом '%1' (PID: %2)?\n\nНеобережні дії з системними процесами можуть призвести до збою Windows.").arg(processName).arg(pid),
+            QMessageBox::Yes | QMessageBox::No);
+        if (reply != QMessageBox::Yes) return;
+    }
+
+    if (selected == actSuspend) {
+        m_backend->suspendProcess(pid);
+    } else if (selected == actResume) {
+        m_backend->resumeProcess(pid);
+    } else if (selected == actTerminate) {
+        m_backend->terminateProcess(pid);
+    }
 }
 
 
