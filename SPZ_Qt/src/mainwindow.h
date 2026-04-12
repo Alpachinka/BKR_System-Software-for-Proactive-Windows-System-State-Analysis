@@ -37,6 +37,7 @@ private slots:
                    const QString& event, const QString& details);
     void saveLogsToCsv();
     void clearCurrentLog();
+    void showSettingsDialog();
 
     void refreshAnomaliesUI();
     void updateHealthScore(int score);
