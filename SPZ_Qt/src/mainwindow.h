@@ -12,17 +12,18 @@
 #include <QGroupBox>
 #include <QScrollArea>
 
-#include <QtCharts/QChartView>
-#include <QtCharts/QLineSeries>
-#include <QtCharts/QValueAxis>
-#include <QtCharts/QChart>
+class QLineSeries;
+class QChart;
+class QChartView;
 
 #include "backend.h"
+#include "alert_manager.h"
+#include "anomaly_engine.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(Backend* backend, QWidget *parent = nullptr);
+    explicit MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEngine, QWidget *parent = nullptr);
     ~MainWindow();
 
 protected:
@@ -36,11 +37,21 @@ private slots:
     void saveLogsToCsv();
     void clearCurrentLog();
 
+    void refreshAnomaliesUI();
+    void updateHealthScore(int score);
+    void ackAllAnomalies();
+
 private:
     Backend* m_backend;
+    AlertManager* m_alerts;
+    AnomalyEngine* m_anomalyEngine;
 
-    QTabWidget*   m_tabWidget;       // outer: Processes / System / Logs
-    QTabWidget*   m_logsTabWidget;    // inner sub-tabs inside Logs
+    QTabWidget*   m_tabWidget;       // outer
+    QTabWidget*   m_logsTabWidget;   // inner
+
+    QTableWidget* m_anomaliesTable;  // New anomalies UI
+    QLabel*       m_healthScoreLabel;// Dynamic label
+
     QTableWidget* m_processTable;
     QTableWidget* m_sysInfoTable;
     QTableWidget* m_processLogTable;
@@ -66,7 +77,8 @@ private:
 
     void setupUI();
     QTableWidget* createLogTable();
-    QChartView*   createResourceChart();   // single combined chart
+    QChartView*   createResourceChart();
     QWidget*      buildSystemTab();
+    QWidget*      buildAnomaliesTab();
     void applyModernStyle();
 };

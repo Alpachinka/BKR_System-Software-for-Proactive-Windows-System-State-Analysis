@@ -13,7 +13,7 @@ set(CMAKE_AUTORCC ON)
 # Note: If CMake cannot find Qt, please set CMAKE_PREFIX_PATH in CMake or VS settings to your Qt msvc2019_64 directory
 # Example: set(CMAKE_PREFIX_PATH "C:/Qt/6.6.2/msvc2019_64")
 set(CMAKE_PREFIX_PATH "C:/Qt/6.11.0/msvc2022_64" CACHE STRING "")
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Charts Sql Network)
 
 # Source files
 set(SOURCES
@@ -23,11 +23,23 @@ set(SOURCES
     src/backend.cpp
     src/backend.h
     src/process_info.h
+    src/database.cpp
+    src/database.h
+    src/baseline_tracker.cpp
+    src/baseline_tracker.h
+    src/anomaly_engine.cpp
+    src/anomaly_engine.h
+    src/recommend_engine.cpp
+    src/recommend_engine.h
+    src/process_scanner.cpp
+    src/process_scanner.h
+    src/alert_manager.cpp
+    src/alert_manager.h
 )
 
 # Add executable
 add_executable(SPZ_Qt WIN32 ${SOURCES})
 
 # Link libraries
-target_link_libraries(SPZ_Qt PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Charts)
+target_link_libraries(SPZ_Qt PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Charts Qt6::Sql Qt6::Network)
 target_link_libraries(SPZ_Qt PRIVATE pdh.lib psapi.lib) # Windows Perf Counters

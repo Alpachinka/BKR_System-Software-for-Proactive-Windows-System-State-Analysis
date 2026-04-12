@@ -9,10 +9,15 @@
 #include <QString>
 #include "process_info.h"
 
+#define NOMINMAX
 #include <windows.h>
 #include <dbt.h>
 #include <netlistmgr.h>
 #include <pdh.h>
+#include "database.h"
+#include "baseline_tracker.h"
+#include "anomaly_engine.h"
+#include "process_scanner.h"
 
 // ─────────────────────── FsWorker ────────────────────────
 class FsWorker : public QObject {
@@ -27,7 +32,7 @@ signals:
 class Backend : public QObject {
     Q_OBJECT
 public:
-    explicit Backend(QObject *parent = nullptr);
+    explicit Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, QObject *parent = nullptr);
     ~Backend();
 
     void startMonitoring();
@@ -50,6 +55,11 @@ private:
     QTimer* m_activeTimer;
     QTimer* m_sysTimer;
     QTimer* m_processLogTimer;
+
+    Database* m_db;
+    BaselineTracker* m_baseline;
+    AnomalyEngine* m_anomalyEngine;
+    ProcessScanner* m_scanner;
 
     // Per-process CPU tracking
     std::map<DWORD, ULONGLONG> m_lastCPUTime;

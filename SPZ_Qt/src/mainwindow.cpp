@@ -1,4 +1,8 @@
 #include "mainwindow.h"
+#include <QtCharts/QChartView>
+#include <QtCharts/QLineSeries>
+#include <QtCharts/QValueAxis>
+#include <QtCharts/QChart>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QFile>
@@ -13,8 +17,8 @@
 using namespace Qt::StringLiterals;
 
 // ─────────────────────────────── constructor ──────────────────────────
-MainWindow::MainWindow(Backend* backend, QWidget *parent)
-    : QMainWindow(parent), m_backend(backend)
+MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEx, QWidget *parent)
+    : QMainWindow(parent), m_backend(backend), m_alerts(alerts), m_anomalyEngine(anomalyEx)
 {
     setupUI();
     applyModernStyle();
@@ -29,6 +33,9 @@ MainWindow::MainWindow(Backend* backend, QWidget *parent)
         [this](const QString& t, const QString& e, const QString& d){ appendLog(m_networkLogTable, t, e, d); });
     connect(m_backend, &Backend::fileSystemEventLogged, this,
         [this](const QString& t, const QString& e, const QString& d){ appendLog(m_fileLogTable, t, e, d); });
+
+    connect(m_anomalyEngine, &AnomalyEngine::healthScoreChanged, this, &MainWindow::updateHealthScore);
+    connect(m_alerts, &AlertManager::alertsChanged, this, &MainWindow::refreshAnomaliesUI);
 
     connect(m_btnSave,  &QPushButton::clicked, this, &MainWindow::saveLogsToCsv);
     connect(m_btnClear, &QPushButton::clicked, this, &MainWindow::clearCurrentLog);
@@ -93,6 +100,37 @@ QChartView* MainWindow::createResourceChart()
     view->setRenderHint(QPainter::Antialiasing);
     view->setMinimumHeight(220);
     return view;
+}
+
+// ─────────────────────────────── Anomalies tab ────────────────────────
+
+QWidget* MainWindow::buildAnomaliesTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay    = new QVBoxLayout(tab);
+    lay->setSpacing(8);
+    lay->setContentsMargins(8, 8, 8, 8);
+
+    auto* topBar = new QHBoxLayout();
+    m_healthScoreLabel = new QLabel("Health Score: 100/100", this);
+    m_healthScoreLabel->setStyleSheet("font-weight: bold; color: #a5d6a7; font-size: 14px;");
+    
+    auto* btnAckAll = new QPushButton("Прийняти всі", this);
+    connect(btnAckAll, &QPushButton::clicked, this, &MainWindow::ackAllAnomalies);
+
+    topBar->addWidget(m_healthScoreLabel);
+    topBar->addStretch();
+    topBar->addWidget(btnAckAll);
+    lay->addLayout(topBar);
+
+    m_anomaliesTable = new QTableWidget(0, 4, this);
+    m_anomaliesTable->setHorizontalHeaderLabels({"Тип", "Опис", "Критичність", "Дія"});
+    m_anomaliesTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_anomaliesTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_anomaliesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    lay->addWidget(m_anomaliesTable, 1);
+
+    return tab;
 }
 
 // ─────────────────────────────── System tab ───────────────────────────
@@ -161,10 +199,13 @@ void MainWindow::setupUI()
     m_processTable->setSortingEnabled(true);
     m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
 
-    // Tab 1: System
+    // Tab 1: Anomalies and Recommendations (NEW)
+    m_tabWidget->addTab(buildAnomaliesTab(), "Аномалії та Поради");
+
+    // Tab 2: System
     m_tabWidget->addTab(buildSystemTab(), "Системні Ресурси");
 
-    // Tab 2: Logs (with inner sub-tabs)
+    // Tab 3: Logs (with inner sub-tabs)
     QWidget* logsTab = new QWidget(this);
     auto* logsLay    = new QVBoxLayout(logsTab);
     logsLay->setContentsMargins(4, 6, 4, 4);
@@ -296,12 +337,71 @@ void MainWindow::appendLog(QTableWidget* table,
     table->setItem(0, 2, new QTableWidgetItem(details));
 }
 
+// ─────────────────────────────── Anomalies Updates ───────────────────────────
+
+void MainWindow::refreshAnomaliesUI()
+{
+    auto anomalies = m_alerts->activeAnomalies();
+    
+    // Disable sorting during update
+    m_anomaliesTable->setSortingEnabled(false);
+    m_anomaliesTable->setRowCount(anomalies.size());
+
+    for (int i = 0; i < anomalies.size(); ++i) {
+        const auto& a = anomalies[i];
+        Recommendation r = m_alerts->getRecommendation(a.id);
+
+        m_anomaliesTable->setItem(i, 0, new QTableWidgetItem(a.type));
+        m_anomaliesTable->setItem(i, 1, new QTableWidgetItem(a.description + "\n\nПорада: " + r.longText));
+        m_anomaliesTable->setItem(i, 2, new QTableWidgetItem(a.severityLabel()));
+
+        // Make row bigger to fit text
+        m_anomaliesTable->setRowHeight(i, 80);
+
+        QWidget* btnWidget = new QWidget(this);
+        auto* lay = new QHBoxLayout(btnWidget);
+        lay->setContentsMargins(4, 4, 4, 4);
+        
+        if (!r.actionLabel.isEmpty() && r.action) {
+            QPushButton* actionBtn = new QPushButton(r.actionLabel, btnWidget);
+            actionBtn->setStyleSheet(a.severity == 3 ? "background: #c62828;" : "background: #f57c00;");
+            connect(actionBtn, &QPushButton::clicked, this, r.action);
+            lay->addWidget(actionBtn);
+        }
+
+        QPushButton* ackBtn = new QPushButton("Прийняти", btnWidget);
+        ackBtn->setStyleSheet("background: #0e639c;");
+        connect(ackBtn, &QPushButton::clicked, this, [this, id = a.id]() {
+            m_alerts->acknowledgeAnomaly(id);
+        });
+        lay->addWidget(ackBtn);
+        
+        m_anomaliesTable->setCellWidget(i, 3, btnWidget);
+    }
+    m_anomaliesTable->setSortingEnabled(true);
+}
+
+void MainWindow::updateHealthScore(int score)
+{
+    QString color = "#a5d6a7"; // green
+    if (score < 80) color = "#ffb74d"; // orange
+    if (score < 50) color = "#ef5350"; // red
+    
+    m_healthScoreLabel->setText(QString("Health Score: %1/100").arg(score));
+    m_healthScoreLabel->setStyleSheet(QString("font-weight: bold; color: %1; font-size: 14px;").arg(color));
+}
+
+void MainWindow::ackAllAnomalies()
+{
+    m_alerts->acknowledgeAll();
+}
+
 // ─────────────────────────────── save / clear ─────────────────────────
 
 void MainWindow::saveLogsToCsv()
 {
-    // Must be on the Logs outer tab (index 2)
-    if (m_tabWidget->currentIndex() != 2) {
+    // Logs outer tab is index 3 now
+    if (m_tabWidget->currentIndex() != 3) {
         QMessageBox::information(this, "Увага",
             "Перейдіть на вкладку \"Логи\" перед збереженням.");
         return;
@@ -340,7 +440,7 @@ void MainWindow::saveLogsToCsv()
 
 void MainWindow::clearCurrentLog()
 {
-    if (m_tabWidget->currentIndex() != 2) return;
+    if (m_tabWidget->currentIndex() != 3) return;
     switch (m_logsTabWidget->currentIndex()) {
     case 0: m_processLogTable->setRowCount(0); break;
     case 1: m_sysLogTable->setRowCount(0);     break;

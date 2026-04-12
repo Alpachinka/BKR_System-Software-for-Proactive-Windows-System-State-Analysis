@@ -1,10 +1,18 @@
 #include <QApplication>
 #include "mainwindow.h"
 #include "backend.h"
+#define NOMINMAX
 #include <windows.h>
 #include <dbt.h>
 #include <initguid.h>
 #include <usbiodef.h> // GUID_DEVINTERFACE_USB_DEVICE
+
+#include "database.h"
+#include "baseline_tracker.h"
+#include "anomaly_engine.h"
+#include "recommend_engine.h"
+#include "process_scanner.h"
+#include "alert_manager.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -12,8 +20,35 @@ int main(int argc, char *argv[]) {
     // Init COM for the main thread (needed for Network manager)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
-    Backend backend;
-    MainWindow window(&backend);
+    // Init Database first
+    Database db;
+    db.open();
+
+    // Logic engines
+    BaselineTracker baseline;
+    AnomalyEngine anomalyEngine(&baseline);
+    RecommendEngine recommender;
+    ProcessScanner scanner;
+
+    // Alert manager controls notifications
+    AlertManager alertManager(&db, &recommender);
+
+    // Connect ProcessScanner -> AlertManager
+    QObject::connect(&scanner, &ProcessScanner::maliciousProcessDetected,
+                     &alertManager, [&alertManager](const QString& processName, const QString& exePath, const ScanResult& result) {
+        Anomaly a;
+        a.type = "suspicious_proc";
+        a.severity = 3; // Critical
+        a.processName = processName;
+        a.description = QString("Файл %1 класифіковано як шкідливий %2 з %3 антивірусами на VirusTotal.\nШлях: %4")
+                            .arg(processName).arg(result.maliciousVotes).arg(result.totalVotes).arg(exePath);
+        alertManager.onAnomalyDetected(a);
+    });
+
+    QObject::connect(&anomalyEngine, &AnomalyEngine::anomalyDetected, &alertManager, &AlertManager::onAnomalyDetected);
+
+    Backend backend(&db, &baseline, &anomalyEngine, &scanner);
+    MainWindow window(&backend, &alertManager, &anomalyEngine);
 
     // Register Device Notification for WM_DEVICECHANGE
     DEV_BROADCAST_DEVICEINTERFACE NotificationFilter;

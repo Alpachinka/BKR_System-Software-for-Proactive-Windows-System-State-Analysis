@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#define NOMINMAX
 #include <windows.h>
 
 struct ProcessData {

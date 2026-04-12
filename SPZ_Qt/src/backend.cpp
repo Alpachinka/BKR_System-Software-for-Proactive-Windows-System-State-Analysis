@@ -16,7 +16,8 @@ static ULONGLONG FileTimeToULL(const FILETIME& ft)
 
 // ───────────────────────────── Backend ─────────────────────────────
 
-Backend::Backend(QObject *parent) : QObject(parent)
+Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, QObject *parent)
+    : QObject(parent), m_db(db), m_baseline(baseline), m_anomalyEngine(anomalyEx), m_scanner(scanner)
 {
     m_activeTimer = new QTimer(this);
     connect(m_activeTimer, &QTimer::timeout, this, &Backend::activeProcessLoop);
@@ -139,6 +140,12 @@ void Backend::activeProcessLoop()
     // Update stored system time ONCE per cycle
     m_lastTotalSystemTimeForProcessCPU = curSystemTime;
 
+    // Save snapshot to DB
+    m_db->saveProcessSnapshot(result);
+
+    // Feed to anomaly engine
+    m_anomalyEngine->analyzeProcesses(result);
+
     emit processesUpdated(result);
 }
 
@@ -186,6 +193,15 @@ void Backend::systemMonitorLoop()
     // ── GPU ──
     data.gpuUsagePercent = ReadGpuUsage();
 
+    // Store metrics in DB
+    m_db->saveSystemMetrics(data);
+
+    // Update baseline
+    m_baseline->addSample(data.cpuUsagePercent, data.ramUsagePercent);
+
+    // Feed to anomaly engine
+    m_anomalyEngine->analyzeSystem(data);
+
     emit systemInfoUpdated(data);
 }
 
@@ -205,9 +221,23 @@ void Backend::processLogLoop()
             if (!m_previousProcessIds.empty() &&
                 m_previousProcessIds.find(pe.th32ProcessID) == m_previousProcessIds.end())
             {
+                QString processName = QString::fromWCharArray(pe.szExeFile);
                 emit processEventLogged(
                     GetCurrentTimeString(), "Запуск процесу",
-                    QString::fromWCharArray(pe.szExeFile));
+                    processName);
+
+                // Get full path using process handle
+                HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+                if (hProc) {
+                    wchar_t pathBuf[MAX_PATH];
+                    DWORD size = MAX_PATH;
+                    if (QueryFullProcessImageNameW(hProc, 0, pathBuf, &size)) {
+                        QString exePath = QString::fromWCharArray(pathBuf);
+                        // Start VirusTotal scan
+                        m_scanner->scanProcess(processName, exePath);
+                    }
+                    CloseHandle(hProc);
+                }
             }
         } while (Process32NextW(hSnap, &pe));
     }
