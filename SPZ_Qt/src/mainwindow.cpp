@@ -1,0 +1,413 @@
+#include "mainwindow.h"
+#include <QHeaderView>
+#include <QMessageBox>
+#include <QFile>
+#include <QTextStream>
+#include <QDir>
+#include <QDateTime>
+#include <windows.h>
+#include <dbt.h>
+#include <initguid.h>
+#include <usbiodef.h>
+
+using namespace Qt::StringLiterals;
+
+// ─────────────────────────────── constructor ──────────────────────────
+MainWindow::MainWindow(Backend* backend, QWidget *parent)
+    : QMainWindow(parent), m_backend(backend)
+{
+    setupUI();
+    applyModernStyle();
+
+    connect(m_backend, &Backend::processesUpdated,  this, &MainWindow::updateProcesses);
+    connect(m_backend, &Backend::systemInfoUpdated, this, &MainWindow::updateSystemInfo);
+    connect(m_backend, &Backend::processEventLogged, this,
+        [this](const QString& t, const QString& e, const QString& d){ appendLog(m_processLogTable, t, e, d); });
+    connect(m_backend, &Backend::systemEventLogged, this,
+        [this](const QString& t, const QString& e, const QString& d){ appendLog(m_sysLogTable, t, e, d); });
+    connect(m_backend, &Backend::networkEventLogged, this,
+        [this](const QString& t, const QString& e, const QString& d){ appendLog(m_networkLogTable, t, e, d); });
+    connect(m_backend, &Backend::fileSystemEventLogged, this,
+        [this](const QString& t, const QString& e, const QString& d){ appendLog(m_fileLogTable, t, e, d); });
+
+    connect(m_btnSave,  &QPushButton::clicked, this, &MainWindow::saveLogsToCsv);
+    connect(m_btnClear, &QPushButton::clicked, this, &MainWindow::clearCurrentLog);
+
+    m_backend->startMonitoring();
+}
+MainWindow::~MainWindow() {}
+
+// ─────────────────────────────── combined resource chart ─────────────
+
+QChartView* MainWindow::createResourceChart()
+{
+    m_cpuSeries = new QLineSeries(this);
+    m_cpuSeries->setName("CPU %");
+    m_cpuSeries->setColor(QColor("#4fc3f7"));
+    m_cpuSeries->pen().setWidthF(1.8);
+
+    m_ramSeries = new QLineSeries(this);
+    m_ramSeries->setName("RAM %");
+    m_ramSeries->setColor(QColor("#81c784"));
+    m_ramSeries->pen().setWidthF(1.8);
+
+    m_gpuSeries = new QLineSeries(this);
+    m_gpuSeries->setName("GPU %");
+    m_gpuSeries->setColor(QColor("#ff8a65"));
+    m_gpuSeries->pen().setWidthF(1.8);
+
+    m_resourceChart = new QChart();
+    m_resourceChart->addSeries(m_cpuSeries);
+    m_resourceChart->addSeries(m_ramSeries);
+    m_resourceChart->addSeries(m_gpuSeries);
+    m_resourceChart->setBackgroundBrush(QBrush(QColor("#1e1e1e")));
+    m_resourceChart->setPlotAreaBackgroundBrush(QBrush(QColor("#252526")));
+    m_resourceChart->setPlotAreaBackgroundVisible(true);
+    m_resourceChart->legend()->setLabelColor(Qt::white);
+    m_resourceChart->legend()->setAlignment(Qt::AlignTop);
+    m_resourceChart->setTitle("Навантаження системи (останні 60 с)");
+    m_resourceChart->setTitleBrush(QBrush(QColor("#d4d4d4")));
+    m_resourceChart->setMargins(QMargins(0, 0, 0, 0));
+
+    auto* axisX = new QValueAxis();
+    axisX->setRange(0, CHART_HISTORY);
+    axisX->setLabelsVisible(false);
+    axisX->setGridLineColor(QColor("#2a2a2a"));
+    axisX->setLinePenColor(QColor("#444"));
+
+    auto* axisY = new QValueAxis();
+    axisY->setRange(0, 100);
+    axisY->setLabelFormat("%d%%");
+    axisY->setLabelsColor(QColor("#9d9d9d"));
+    axisY->setGridLineColor(QColor("#2a2a2a"));
+    axisY->setLinePenColor(QColor("#444"));
+    axisY->setTickCount(6);
+
+    m_resourceChart->addAxis(axisX, Qt::AlignBottom);
+    m_resourceChart->addAxis(axisY, Qt::AlignLeft);
+    m_cpuSeries->attachAxis(axisX); m_cpuSeries->attachAxis(axisY);
+    m_ramSeries->attachAxis(axisX); m_ramSeries->attachAxis(axisY);
+    m_gpuSeries->attachAxis(axisX); m_gpuSeries->attachAxis(axisY);
+
+    auto* view = new QChartView(m_resourceChart, this);
+    view->setRenderHint(QPainter::Antialiasing);
+    view->setMinimumHeight(220);
+    return view;
+}
+
+// ─────────────────────────────── System tab ───────────────────────────
+
+QWidget* MainWindow::buildSystemTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay    = new QVBoxLayout(tab);
+    lay->setSpacing(8);
+    lay->setContentsMargins(8, 8, 8, 8);
+
+    // ── Info table ──
+    m_sysInfoTable = new QTableWidget(0, 2, this);
+    m_sysInfoTable->setHorizontalHeaderLabels({"Параметр", "Значення"});
+    m_sysInfoTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_sysInfoTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_sysInfoTable->setMaximumHeight(150);
+    lay->addWidget(m_sysInfoTable);
+
+    // ── Three compact progress bars ──
+    auto addBar = [&](const QString& label, QProgressBar*& bar, const QString& color) {
+        auto* row = new QHBoxLayout();
+        auto* lbl = new QLabel(label, this);
+        lbl->setFixedWidth(42);
+        lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        bar = new QProgressBar(this);
+        bar->setRange(0, 100);
+        bar->setFormat("%v%");
+        bar->setFixedHeight(18);
+        bar->setStyleSheet(QString(
+            "QProgressBar::chunk { background: %1; border-radius: 3px; }").arg(color));
+        row->addWidget(lbl);
+        row->addWidget(bar);
+        lay->addLayout(row);
+    };
+    addBar("CPU",  m_cpuProgress, "#4fc3f7");
+    addBar("RAM",  m_ramProgress, "#81c784");
+    addBar("GPU",  m_gpuProgress, "#ff8a65");
+
+    // ── Single combined chart ──
+    lay->addWidget(createResourceChart(), 1);
+
+    return tab;
+}
+
+// ─────────────────────────────── setupUI ──────────────────────────────
+
+void MainWindow::setupUI()
+{
+    QWidget* central = new QWidget(this);
+    setCentralWidget(central);
+
+    auto* mainLay = new QVBoxLayout(central);
+    mainLay->setContentsMargins(6, 6, 6, 6);
+    mainLay->setSpacing(4);
+
+    m_tabWidget = new QTabWidget(this);
+    mainLay->addWidget(m_tabWidget, 1);
+
+    // Tab 0: Processes
+    m_processTable = new QTableWidget(0, 3, this);
+    m_processTable->setHorizontalHeaderLabels({"Ім'я процесу", "Пам'ять (МБ)", "CPU (%)"});
+    m_processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_processTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_processTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_processTable->setSortingEnabled(true);
+    m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
+
+    // Tab 1: System
+    m_tabWidget->addTab(buildSystemTab(), "Системні Ресурси");
+
+    // Tab 2: Logs (with inner sub-tabs)
+    QWidget* logsTab = new QWidget(this);
+    auto* logsLay    = new QVBoxLayout(logsTab);
+    logsLay->setContentsMargins(4, 6, 4, 4);
+
+    m_logsTabWidget = new QTabWidget(logsTab);
+    m_logsTabWidget->setTabPosition(QTabWidget::North);
+
+    m_processLogTable = createLogTable();
+    m_logsTabWidget->addTab(m_processLogTable, "📋  Процеси");
+
+    m_sysLogTable = createLogTable();
+    m_logsTabWidget->addTab(m_sysLogTable,     "🖥  Система");
+
+    m_networkLogTable = createLogTable();
+    m_logsTabWidget->addTab(m_networkLogTable, "🌐  Мережа");
+
+    m_fileLogTable = createLogTable();
+    m_logsTabWidget->addTab(m_fileLogTable,    "📁  Файли");
+
+    logsLay->addWidget(m_logsTabWidget);
+    m_tabWidget->addTab(logsTab, "Логи");
+
+    // Bottom buttons
+    auto* btnLay = new QHBoxLayout();
+    btnLay->addStretch();
+    m_btnClear = new QPushButton("Очистити", this);
+    m_btnSave  = new QPushButton("Зберегти", this);
+    btnLay->addWidget(m_btnClear);
+    btnLay->addWidget(m_btnSave);
+    mainLay->addLayout(btnLay);
+
+    setWindowTitle("SPZ: Системний Монітор  ·  Qt6 Edition");
+    resize(1000, 720);
+}
+
+QTableWidget* MainWindow::createLogTable()
+{
+    auto* t = new QTableWidget(0, 3, this);
+    t->setHorizontalHeaderLabels({"Час", "Подія", "Деталі"});
+    t->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    t->setSelectionBehavior(QAbstractItemView::SelectRows);
+    t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    return t;
+}
+
+// ─────────────────────────────── update slots ─────────────────────────
+
+void MainWindow::updateProcesses(const std::vector<ProcessData>& procs)
+{
+    // Block sorting temporarily for smooth update
+    m_processTable->setSortingEnabled(false);
+    m_processTable->setRowCount(static_cast<int>(procs.size()));
+
+    for (int i = 0; i < static_cast<int>(procs.size()); ++i) {
+        const auto& p = procs[i];
+        auto* nameItem = new QTableWidgetItem(p.name);
+        auto* memItem  = new QTableWidgetItem(
+            QString::number(p.memUsageMB, 'f', 2) + " МБ");
+        auto* cpuItem  = new QTableWidgetItem(
+            QString::number(p.cpuUsagePercent, 'f', 1) + " %");
+
+        // Make RAM and CPU sortable numerically
+        memItem->setData(Qt::UserRole, p.memUsageMB);
+        cpuItem->setData(Qt::UserRole, p.cpuUsagePercent);
+
+        m_processTable->setItem(i, 0, nameItem);
+        m_processTable->setItem(i, 1, memItem);
+        m_processTable->setItem(i, 2, cpuItem);
+    }
+    m_processTable->setSortingEnabled(true);
+}
+
+void MainWindow::updateSystemInfo(const SystemData& d)
+{
+    // ── Table ──
+    auto setRow = [&](int row, const QString& param, const QString& val) {
+        if (m_sysInfoTable->rowCount() <= row)
+            m_sysInfoTable->setRowCount(row + 1);
+        if (!m_sysInfoTable->item(row, 0))
+            m_sysInfoTable->setItem(row, 0, new QTableWidgetItem());
+        if (!m_sysInfoTable->item(row, 1))
+            m_sysInfoTable->setItem(row, 1, new QTableWidgetItem());
+        m_sysInfoTable->item(row, 0)->setText(param);
+        m_sysInfoTable->item(row, 1)->setText(val);
+    };
+
+    setRow(0, "Загальна RAM",
+           QString::number(d.totalRamMB / 1024.0, 'f', 2) + " ГБ");
+    setRow(1, "Доступна RAM",
+           QString::number(d.availRamMB / 1024.0, 'f', 2) + " ГБ");
+    setRow(2, "Використана RAM",
+           QString::number(d.usedRamMB / 1024.0, 'f', 2) +
+           " ГБ  (" + QString::number(d.ramUsagePercent) + " %)");
+    setRow(3, "Навантаження CPU",
+           QString::number(d.cpuUsagePercent) + " %");
+    setRow(4, "Диск C:  Всього / Вільно",
+           QString::number(d.totalDiskGB, 'f', 1) + " ГБ  /  " +
+           QString::number(d.freeDiskGB,  'f', 1) + " ГБ");
+
+    // ── Progress bars ──
+    m_cpuProgress->setValue(d.cpuUsagePercent);
+    m_ramProgress->setValue(d.ramUsagePercent);
+    m_gpuProgress->setValue(d.gpuUsagePercent);
+
+    // ── Chart: append all three series ──
+    ++m_chartTick;
+    m_cpuSeries->append(m_chartTick, d.cpuUsagePercent);
+    m_ramSeries->append(m_chartTick, d.ramUsagePercent);
+    m_gpuSeries->append(m_chartTick, d.gpuUsagePercent);
+
+    // Trim old points
+    while (m_cpuSeries->count() > CHART_HISTORY) m_cpuSeries->remove(0);
+    while (m_ramSeries->count() > CHART_HISTORY) m_ramSeries->remove(0);
+    while (m_gpuSeries->count() > CHART_HISTORY) m_gpuSeries->remove(0);
+
+    // Scroll X axis
+    if (m_resourceChart && m_chartTick > CHART_HISTORY)
+        m_resourceChart->axes(Qt::Horizontal).first()->setRange(
+            m_chartTick - CHART_HISTORY, m_chartTick);
+}
+
+void MainWindow::appendLog(QTableWidget* table,
+                           const QString& time, const QString& event,
+                           const QString& details)
+{
+    table->insertRow(0);
+    table->setItem(0, 0, new QTableWidgetItem(time));
+    table->setItem(0, 1, new QTableWidgetItem(event));
+    table->setItem(0, 2, new QTableWidgetItem(details));
+}
+
+// ─────────────────────────────── save / clear ─────────────────────────
+
+void MainWindow::saveLogsToCsv()
+{
+    // Must be on the Logs outer tab (index 2)
+    if (m_tabWidget->currentIndex() != 2) {
+        QMessageBox::information(this, "Увага",
+            "Перейдіть на вкладку \"Логи\" перед збереженням.");
+        return;
+    }
+
+    int sub = m_logsTabWidget->currentIndex();
+
+    QTableWidget* tbl = nullptr;
+    QString folder;
+    switch (sub) {
+    case 0: tbl = m_processLogTable; folder = "ProcessLogs"; break;
+    case 1: tbl = m_sysLogTable;     folder = "SysLogs";     break;
+    case 2: tbl = m_networkLogTable; folder = "NetLogs";     break;
+    case 3: tbl = m_fileLogTable;    folder = "FileLogs";    break;
+    default: return;
+    }
+
+    QDir dir("Logs/" + folder);
+    if (!dir.exists()) dir.mkpath(".");
+
+    QString fname = dir.path() + "/Log_" +
+        QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".csv";
+
+    QFile file(fname);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        out << "Час,Подія,Деталі\n";
+        for (int r = 0; r < tbl->rowCount(); ++r)
+            out << "\"" << tbl->item(r,0)->text() << "\","
+                << "\""  << tbl->item(r,1)->text() << "\","
+                << "\""  << tbl->item(r,2)->text() << "\"\n";
+        file.close();
+        QMessageBox::information(this, "Успіх", "Збережено: " + fname);
+    }
+}
+
+void MainWindow::clearCurrentLog()
+{
+    if (m_tabWidget->currentIndex() != 2) return;
+    switch (m_logsTabWidget->currentIndex()) {
+    case 0: m_processLogTable->setRowCount(0); break;
+    case 1: m_sysLogTable->setRowCount(0);     break;
+    case 2: m_networkLogTable->setRowCount(0); break;
+    case 3: m_fileLogTable->setRowCount(0);    break;
+    }
+}
+
+// ─────────────────────────────── native events ────────────────────────
+
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+    MSG* msg = static_cast<MSG*>(message);
+    if (msg->message == WM_DEVICECHANGE) {
+        auto* hdr = reinterpret_cast<PDEV_BROADCAST_HDR>(msg->lParam);
+        if (hdr && hdr->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE) {
+            QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            if (msg->wParam == DBT_DEVICEARRIVAL)
+                emit m_backend->systemEventLogged(ts, "USB підключено",  "USB-пристрій підключено");
+            else if (msg->wParam == DBT_DEVICEREMOVECOMPLETE)
+                emit m_backend->systemEventLogged(ts, "USB відключено",  "USB-пристрій відключено");
+        }
+    } else if (msg->message == WM_POWERBROADCAST) {
+        if (msg->wParam == PBT_APMPOWERSTATUSCHANGE) {
+            emit m_backend->systemEventLogged(
+                QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
+                "Живлення", "Статус живлення змінився");
+        }
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+// ─────────────────────────────── QSS dark style ───────────────────────
+
+void MainWindow::applyModernStyle()
+{
+    setStyleSheet(R"(
+        QMainWindow, QWidget { background-color: #1e1e1e; color: #d4d4d4;
+                               font-family: 'Segoe UI', Arial; font-size: 13px; }
+
+        QTabWidget::pane   { border: 1px solid #333; background: #252526; border-radius: 4px; }
+        QTabBar::tab       { background: #2d2d30; border: 1px solid #333; padding: 9px 18px;
+                             border-radius: 4px 4px 0 0; margin-right: 2px; }
+        QTabBar::tab:selected { background: #3f3f46; color: #fff; font-weight: bold; }
+        QTabBar::tab:hover { background: #3e3e42; }
+
+        QTableWidget       { background: #1e1e1e; alternate-background-color: #252526;
+                             border: none; gridline-color: #333;
+                             selection-background-color: #094771; }
+        QHeaderView::section { background: #2d2d30; padding: 6px; border: 1px solid #1e1e1e;
+                               color: #fff; font-weight: bold; }
+
+        QPushButton        { background: #0e639c; color: #fff; border: none;
+                             padding: 7px 22px; border-radius: 4px; font-weight: bold; }
+        QPushButton:hover  { background: #1177bb; }
+        QPushButton:pressed{ background: #094771; }
+
+        QProgressBar       { border: 1px solid #444; background: #2d2d30;
+                             border-radius: 4px; text-align: center; color: #fff;
+                             font-weight: bold; height: 22px; }
+        QProgressBar::chunk{ background: #0e639c; border-radius: 3px; }
+
+        QGroupBox          { border: 1px solid #333; border-radius: 4px;
+                             margin-top: 6px; padding-top: 4px; }
+        QGroupBox::title   { subcontrol-origin: margin; left: 8px; color: #9d9d9d; }
+
+        QScrollBar:vertical { background: #252526; width: 8px; border-radius: 4px; }
+        QScrollBar::handle:vertical { background: #555; border-radius: 4px; }
+    )");
+}

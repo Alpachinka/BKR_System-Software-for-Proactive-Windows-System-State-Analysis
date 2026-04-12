@@ -1,0 +1,41 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-default",
+      "displayName": "Windows x64 with Qt 6.11",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.0/msvc2022_64"
+      }
+    },
+    {
+      "hidden": true,
+      "name": "Qt",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}"
+      },
+      "vendor": {
+        "qt-project.org/Qt": {
+          "checksum": "wVa86FgEkvdCTVp1/nxvrkaemJc="
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-default",
+      "configurePreset": "windows-default"
+    }
+  ],
+  "vendor": {
+    "qt-project.org/Presets": {
+      "checksum": "5x7k5wlxSj15qr0GnCf/VRdG+9M="
+    }
+  }
+}
