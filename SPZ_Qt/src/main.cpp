@@ -8,6 +8,7 @@
 #include <usbiodef.h> // GUID_DEVINTERFACE_USB_DEVICE
 
 #include "database.h"
+#include "settings_manager.h"
 #include "baseline_tracker.h"
 #include "anomaly_engine.h"
 #include "recommend_engine.h"
@@ -20,13 +21,18 @@ int main(int argc, char *argv[]) {
     // Init COM for the main thread (needed for Network manager)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
+    // Load configuration
+    SettingsManager settings;
+
     // Init Database first
     Database db;
     db.open();
 
-    // Logic engines
-    BaselineTracker baseline;
-    AnomalyEngine anomalyEngine(&baseline);
+    // Baseline Tracking
+    BaselineTracker baseline(&settings);
+
+    // AI/Anomaly Rules Engine
+    AnomalyEngine anomalyEngine(&baseline, &settings);
     RecommendEngine recommender;
     ProcessScanner scanner;
 
@@ -48,7 +54,7 @@ int main(int argc, char *argv[]) {
     QObject::connect(&anomalyEngine, &AnomalyEngine::anomalyDetected, &alertManager, &AlertManager::onAnomalyDetected);
 
     Backend backend(&db, &baseline, &anomalyEngine, &scanner);
-    MainWindow window(&backend, &alertManager, &anomalyEngine);
+    MainWindow window(&backend, &alertManager, &anomalyEngine, &settings);
 
     // Register Device Notification for WM_DEVICECHANGE
     DEV_BROADCAST_DEVICEINTERFACE NotificationFilter;

@@ -35,6 +35,8 @@ set(SOURCES
     src/process_scanner.h
     src/alert_manager.cpp
     src/alert_manager.h
+    src/settings_manager.cpp
+    src/settings_dialog.cpp
 )
 
 # Add executable

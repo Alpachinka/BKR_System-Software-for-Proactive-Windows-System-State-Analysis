@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "settings_dialog.h"
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
@@ -17,8 +18,8 @@
 using namespace Qt::StringLiterals;
 
 // ─────────────────────────────── constructor ──────────────────────────
-MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEx, QWidget *parent)
-    : QMainWindow(parent), m_backend(backend), m_alerts(alerts), m_anomalyEngine(anomalyEx)
+MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEx, SettingsManager* settings, QWidget *parent)
+    : QMainWindow(parent), m_backend(backend), m_alerts(alerts), m_anomalyEngine(anomalyEx), m_settings(settings)
 {
     setupUI();
     applyModernStyle();
@@ -115,11 +116,15 @@ QWidget* MainWindow::buildAnomaliesTab()
     m_healthScoreLabel = new QLabel("Health Score: 100/100", this);
     m_healthScoreLabel->setStyleSheet("font-weight: bold; color: #a5d6a7; font-size: 14px;");
     
+    auto* btnSettings = new QPushButton("⚙️ Налаштування", this);
+    connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
+
     auto* btnAckAll = new QPushButton("Прийняти всі", this);
     connect(btnAckAll, &QPushButton::clicked, this, &MainWindow::ackAllAnomalies);
 
     topBar->addWidget(m_healthScoreLabel);
     topBar->addStretch();
+    topBar->addWidget(btnSettings);
     topBar->addWidget(btnAckAll);
     lay->addLayout(topBar);
 
@@ -317,14 +322,17 @@ void MainWindow::updateSystemInfo(const SystemData& d)
     m_gpuSeries->append(m_chartTick, d.gpuUsagePercent);
 
     // Trim old points
-    while (m_cpuSeries->count() > CHART_HISTORY) m_cpuSeries->remove(0);
-    while (m_ramSeries->count() > CHART_HISTORY) m_ramSeries->remove(0);
-    while (m_gpuSeries->count() > CHART_HISTORY) m_gpuSeries->remove(0);
+    while (m_cpuSeries->count() > m_settings->chartHistory) m_cpuSeries->remove(0);
+    while (m_ramSeries->count() > m_settings->chartHistory) m_ramSeries->remove(0);
+    while (m_gpuSeries->count() > m_settings->chartHistory) m_gpuSeries->remove(0);
 
-    // Scroll X axis
-    if (m_resourceChart && m_chartTick > CHART_HISTORY)
-        m_resourceChart->axes(Qt::Horizontal).first()->setRange(
-            m_chartTick - CHART_HISTORY, m_chartTick);
+    // Keep only chartHistory points horizontally
+    auto* axisX = m_resourceChart->axes(Qt::Horizontal).first();
+    if (m_chartTick > m_settings->chartHistory) {
+        axisX->setRange(m_chartTick - m_settings->chartHistory, m_chartTick);
+    } else {
+        axisX->setRange(0, m_settings->chartHistory);
+    }
 }
 
 void MainWindow::appendLog(QTableWidget* table,
@@ -448,6 +456,13 @@ void MainWindow::clearCurrentLog()
     case 3: m_fileLogTable->setRowCount(0);    break;
     }
 }
+
+void MainWindow::showSettingsDialog()
+{
+    SettingsDialog dlg(m_settings, this);
+    dlg.exec();
+}
+
 
 // ─────────────────────────────── native events ────────────────────────
 

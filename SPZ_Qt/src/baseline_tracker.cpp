@@ -1,7 +1,12 @@
 #include "baseline_tracker.h"
 #include <numeric>
 
-BaselineTracker::BaselineTracker(QObject* parent) : QObject(parent) {}
+BaselineTracker::BaselineTracker(SettingsManager* settings, QObject* parent) 
+    : QObject(parent), m_settings(settings) {}
+
+bool BaselineTracker::isReady() const {
+    return static_cast<int>(m_cpu.size()) >= m_settings->minSamples;
+}
 
 void BaselineTracker::addSample(int cpu, int ram)
 {
@@ -12,7 +17,7 @@ void BaselineTracker::addSample(int cpu, int ram)
     m_ramSum += ram;
 
     // Remove oldest values if window is full
-    if (static_cast<int>(m_cpu.size()) > WINDOW) {
+    if (static_cast<int>(m_cpu.size()) > m_settings->baselineWindow) {
         m_cpuSum -= m_cpu.front();
         m_ramSum -= m_ram.front();
         m_cpu.pop_front();

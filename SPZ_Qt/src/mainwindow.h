@@ -19,11 +19,12 @@ class QChartView;
 #include "backend.h"
 #include "alert_manager.h"
 #include "anomaly_engine.h"
+#include "settings_manager.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEngine, QWidget *parent = nullptr);
+    explicit MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEngine, SettingsManager* settings, QWidget *parent = nullptr);
     ~MainWindow();
 
 protected:
@@ -45,6 +46,7 @@ private:
     Backend* m_backend;
     AlertManager* m_alerts;
     AnomalyEngine* m_anomalyEngine;
+    SettingsManager* m_settings;
 
     QTabWidget*   m_tabWidget;       // outer
     QTabWidget*   m_logsTabWidget;   // inner

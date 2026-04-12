@@ -1,8 +1,8 @@
 #include "anomaly_engine.h"
 #include <QUuid>
 
-AnomalyEngine::AnomalyEngine(BaselineTracker* baseline, QObject* parent)
-    : QObject(parent), m_baseline(baseline) {}
+AnomalyEngine::AnomalyEngine(BaselineTracker* baseline, SettingsManager* settings, QObject* parent)
+    : QObject(parent), m_baseline(baseline), m_settings(settings) {}
 
 // ─────────────────────── Cooldown helper ─────────────────────────────────
 
@@ -10,7 +10,7 @@ bool AnomalyEngine::isCooledDown(const QString& key)
 {
     auto it = m_cooldown.find(key);
     if (it == m_cooldown.end()) return true;
-    return it.value().secsTo(QDateTime::currentDateTime()) >= COOLDOWN_SECS;
+    return it.value().secsTo(QDateTime::currentDateTime()) >= m_settings->cooldownSecs;
 }
 
 void AnomalyEngine::emit_anomaly(const Anomaly& a)
@@ -37,9 +37,9 @@ void AnomalyEngine::analyzeProcesses(const std::vector<ProcessData>& procs)
 
     for (const auto& p : procs) {
         // ── Detector 1: CPU spike ─────────────────────────────────────────
-        if (p.cpuUsagePercent >= CPU_SPIKE_THRESHOLD) {
+        if (p.cpuUsagePercent >= m_settings->cpuSpikeThreshold) {
             m_cpuHighTicks[p.pid]++;
-            if (m_cpuHighTicks[p.pid] == CPU_SPIKE_TICKS) {
+            if (m_cpuHighTicks[p.pid] == m_settings->cpuSpikeTicks) {
                 Anomaly a;
                 a.type        = "cpu_spike";
                 a.processName = p.name;
@@ -62,9 +62,9 @@ void AnomalyEngine::analyzeProcesses(const std::vector<ProcessData>& procs)
 void AnomalyEngine::analyzeSystem(const SystemData& sys)
 {
     // ── Detector 2: RAM pressure ──────────────────────────────────────────
-    if (sys.ramUsagePercent >= RAM_HIGH_THRESHOLD) {
+    if (sys.ramUsagePercent >= m_settings->ramHighThreshold) {
         m_ramHighTicks++;
-        if (m_ramHighTicks == RAM_HIGH_TICKS) {
+        if (m_ramHighTicks == m_settings->ramHighTicks) {
             Anomaly a;
             a.type        = "ram_pressure";
             a.severity    = 3; // Critical
@@ -82,9 +82,9 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
     }
 
     // ── Detector 3: GPU overload ──────────────────────────────────────────
-    if (sys.gpuUsagePercent >= GPU_HIGH_THRESHOLD) {
+    if (sys.gpuUsagePercent >= m_settings->gpuHighThreshold) {
         m_gpuSpikeSeconds++;
-        if (m_gpuSpikeSeconds == GPU_HIGH_TICKS) {
+        if (m_gpuSpikeSeconds == m_settings->gpuHighTicks) {
             Anomaly a;
             a.type        = "gpu_overload";
             a.severity    = 2;
@@ -99,7 +99,7 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
     }
 
     // ── Detector 4: Disk space low ────────────────────────────────────────
-    if (sys.freeDiskGB > 0 && sys.freeDiskGB < DISK_LOW_GB) {
+    if (sys.freeDiskGB > 0 && sys.freeDiskGB < m_settings->diskLowGb) {
         Anomaly a;
         a.type        = "disk_low";
         a.severity    = 2;
@@ -117,13 +117,13 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
         const double avgRam = m_baseline->avgRam();
 
         bool cpuAbove = (avgCpu > 5.0) &&
-                        (sys.cpuUsagePercent > avgCpu * (1.0 + BASELINE_DEVIATION));
+                        (sys.cpuUsagePercent > avgCpu * (1.0 + m_settings->baselineDeviation));
         bool ramAbove = (avgRam > 5.0) &&
-                        (sys.ramUsagePercent > avgRam * (1.0 + BASELINE_DEVIATION));
+                        (sys.ramUsagePercent > avgRam * (1.0 + m_settings->baselineDeviation));
 
         if (cpuAbove || ramAbove) {
             m_baselineHighTicks++;
-            if (m_baselineHighTicks == BASELINE_TICKS) {
+            if (m_baselineHighTicks == m_settings->baselineTicks) {
                 Anomaly a;
                 a.type     = "baseline_deviation";
                 a.severity = 2;
