@@ -1,12 +1,13 @@
 #include "settings_dialog.h"
 #include <QLabel>
 #include <QGroupBox>
+#include <QFileDialog>
 
 SettingsDialog::SettingsDialog(SettingsManager* settings, QWidget* parent)
     : QDialog(parent), m_settings(settings)
 {
     setWindowTitle("Налаштування");
-    resize(420, 520);
+    resize(480, 560);
 
     setupUI();
     loadFromManager();
@@ -19,7 +20,7 @@ void SettingsDialog::setupUI()
     QTabWidget* tabWidget = new QTabWidget(this);
     mainLayout->addWidget(tabWidget);
 
-    // --- Tab 1: General (Загальні) ---
+    // ═══════════ Tab 1: General (Загальні) ═══════════
     QWidget* tabGeneral = new QWidget();
     QFormLayout* formGen = new QFormLayout(tabGeneral);
 
@@ -48,7 +49,7 @@ void SettingsDialog::setupUI()
 
     tabWidget->addTab(tabGeneral, "Загальні");
 
-    // --- Tab 2: Anomalies ---
+    // ═══════════ Tab 2: Anomalies ═══════════
     QWidget* tabAnomalies = new QWidget();
     QFormLayout* formAno = new QFormLayout(tabAnomalies);
 
@@ -80,7 +81,7 @@ void SettingsDialog::setupUI()
 
     tabWidget->addTab(tabAnomalies, "Аномалії");
 
-    // --- Tab 3: Baseline ---
+    // ═══════════ Tab 3: Baseline ═══════════
     QWidget* tabSys = new QWidget();
     QFormLayout* formSys = new QFormLayout(tabSys);
 
@@ -104,7 +105,55 @@ void SettingsDialog::setupUI()
 
     tabWidget->addTab(tabSys, "Аналіз");
 
-    // --- Buttons ---
+    // ═══════════ Tab 4: Paths (Шляхи) ═══════════
+    QWidget* tabPaths = new QWidget();
+    auto* pathsLay = new QVBoxLayout(tabPaths);
+
+    // Log save path
+    auto* logGroup = new QGroupBox("Збереження логів", tabPaths);
+    auto* logLay = new QHBoxLayout(logGroup);
+    m_logSavePath = new QLineEdit(this);
+    m_logSavePath->setPlaceholderText("Шлях для збереження CSV...");
+    auto* btnBrowseLog = new QPushButton("Обрати...", this);
+    connect(btnBrowseLog, &QPushButton::clicked, this, [this]() {
+        QString dir = QFileDialog::getExistingDirectory(this, "Оберіть папку для логів", m_logSavePath->text());
+        if (!dir.isEmpty()) m_logSavePath->setText(dir);
+    });
+    logLay->addWidget(m_logSavePath, 1);
+    logLay->addWidget(btnBrowseLog);
+    pathsLay->addWidget(logGroup);
+
+    // Watched folders
+    auto* watchGroup = new QGroupBox("Відстеження файлів (Логи → Файли)", tabPaths);
+    auto* watchLay = new QVBoxLayout(watchGroup);
+    m_watchedFoldersList = new QListWidget(this);
+    watchLay->addWidget(m_watchedFoldersList);
+
+    auto* watchBtnLay = new QHBoxLayout();
+    auto* btnAddFolder = new QPushButton("Додати папку", this);
+    auto* btnRemoveFolder = new QPushButton("Видалити обрану", this);
+    watchBtnLay->addWidget(btnAddFolder);
+    watchBtnLay->addWidget(btnRemoveFolder);
+    watchBtnLay->addStretch();
+    watchLay->addLayout(watchBtnLay);
+
+    connect(btnAddFolder, &QPushButton::clicked, this, [this]() {
+        QString dir = QFileDialog::getExistingDirectory(this, "Оберіть папку для відстеження");
+        if (!dir.isEmpty()) {
+            m_watchedFoldersList->addItem(dir);
+        }
+    });
+    connect(btnRemoveFolder, &QPushButton::clicked, this, [this]() {
+        auto* item = m_watchedFoldersList->currentItem();
+        if (item) delete item;
+    });
+
+    pathsLay->addWidget(watchGroup);
+    pathsLay->addStretch();
+
+    tabWidget->addTab(tabPaths, "Шляхи");
+
+    // ═══════════ Buttons ═══════════
     QHBoxLayout* btnLayout = new QHBoxLayout();
     QPushButton* btnReset = new QPushButton("За замовчуванням");
     QPushButton* btnCancel = new QPushButton("Скасувати");
@@ -146,6 +195,10 @@ void SettingsDialog::loadFromManager()
     if (promptIdx != -1) m_processPromptLevel->setCurrentIndex(promptIdx);
     
     m_showTrustLevel->setChecked(m_settings->showTrustLevel);
+
+    m_logSavePath->setText(m_settings->logSavePath);
+    m_watchedFoldersList->clear();
+    m_watchedFoldersList->addItems(m_settings->watchedFolders);
 }
 
 void SettingsDialog::resetSettings()
@@ -175,6 +228,12 @@ void SettingsDialog::saveSettings()
     m_settings->appTheme          = m_appTheme->currentData().toString();
     m_settings->processPromptLevel= m_processPromptLevel->currentData().toInt();
     m_settings->showTrustLevel    = m_showTrustLevel->isChecked();
+
+    m_settings->logSavePath       = m_logSavePath->text();
+    QStringList folders;
+    for (int i = 0; i < m_watchedFoldersList->count(); ++i)
+        folders << m_watchedFoldersList->item(i)->text();
+    m_settings->watchedFolders    = folders;
 
     m_settings->save(); // this also emits settingsChanged()
     accept();

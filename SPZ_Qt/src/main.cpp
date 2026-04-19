@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(&anomalyEngine, &AnomalyEngine::anomalyDetected, &alertManager, &AlertManager::onAnomalyDetected);
 
-    Backend backend(&db, &baseline, &anomalyEngine, &scanner);
+    Backend backend(&db, &baseline, &anomalyEngine, &scanner, &settings);
     MainWindow window(&backend, &alertManager, &anomalyEngine, &settings);
 
     // Register Device Notification for WM_DEVICECHANGE
@@ -66,7 +66,9 @@ int main(int argc, char *argv[]) {
     RegisterDeviceNotification(reinterpret_cast<HANDLE>(window.winId()), &NotificationFilter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
     QObject::connect(&alertManager, &AlertManager::showMainWindowRequested, &window, [&window]() {
+        window.setWindowState((window.windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
         window.showNormal();
+        window.raise();
         window.activateWindow();
     });
 

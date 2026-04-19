@@ -139,10 +139,30 @@ QWidget* MainWindow::buildAnomaliesTab()
     m_anomaliesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     lay->addWidget(m_anomaliesTable, 1);
 
+    // Placeholder when no anomalies
+    m_noAnomaliesLabel = new QLabel(this);
+    m_noAnomaliesLabel->setText(
+        "✅  Система працює стабільно\n\n"
+        "Аномалій не виявлено. Монітор продовжує аналіз у фоновому режимі.\n"
+        "Якщо будуть виявлені відхилення — вони з'являться тут автоматично.");
+    m_noAnomaliesLabel->setAlignment(Qt::AlignCenter);
+    m_noAnomaliesLabel->setStyleSheet("font-size: 14px; color: #888; padding: 40px;");
+    m_noAnomaliesLabel->setWordWrap(true);
+    lay->addWidget(m_noAnomaliesLabel);
+
     return tab;
 }
 
 // ─────────────────────────────── System tab ───────────────────────────
+
+static QString queryRegistryString(HKEY root, const wchar_t* path, const wchar_t* key)
+{
+    wchar_t buf[512] = {};
+    DWORD size = sizeof(buf);
+    if (RegGetValueW(root, path, key, RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS)
+        return QString::fromWCharArray(buf);
+    return "—";
+}
 
 QWidget* MainWindow::buildSystemTab()
 {
@@ -151,12 +171,65 @@ QWidget* MainWindow::buildSystemTab()
     lay->setSpacing(8);
     lay->setContentsMargins(8, 8, 8, 8);
 
-    // ── Info table ──
+    // ── Hardware info table ──
+    auto* hwTable = new QTableWidget(0, 2, this);
+    hwTable->setHorizontalHeaderLabels({"Компонент", "Значення"});
+    hwTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    hwTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    hwTable->setMaximumHeight(180);
+
+    auto addHwRow = [&](const QString& param, const QString& value) {
+        int r = hwTable->rowCount();
+        hwTable->insertRow(r);
+        hwTable->setItem(r, 0, new QTableWidgetItem(param));
+        hwTable->setItem(r, 1, new QTableWidgetItem(value));
+    };
+
+    // CPU
+    addHwRow("Процесор (CPU)", queryRegistryString(
+        HKEY_LOCAL_MACHINE,
+        L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+        L"ProcessorNameString"));
+
+    // RAM total
+    MEMORYSTATUSEX memStat{};
+    memStat.dwLength = sizeof(memStat);
+    GlobalMemoryStatusEx(&memStat);
+    addHwRow("Оперативна пам'ять (RAM)",
+        QString::number(memStat.ullTotalPhys / (1024.0 * 1024.0 * 1024.0), 'f', 1) + " ГБ");
+
+    // GPU
+    addHwRow("Відеоадаптер (GPU)", queryRegistryString(
+        HKEY_LOCAL_MACHINE,
+        L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000",
+        L"DriverDesc"));
+
+    // Motherboard
+    addHwRow("Материнська плата", queryRegistryString(
+        HKEY_LOCAL_MACHINE,
+        L"SYSTEM\\HardwareConfig\\Current",
+        L"BaseBoardProduct"));
+
+    // OS
+    addHwRow("Операційна система", queryRegistryString(
+        HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+        L"ProductName"));
+
+    // Computer name
+    wchar_t compName[256];
+    DWORD compSize = 256;
+    GetComputerNameW(compName, &compSize);
+    addHwRow("Ім'я комп'ютера", QString::fromWCharArray(compName));
+
+    lay->addWidget(hwTable);
+
+    // ── Live metrics table ──
     m_sysInfoTable = new QTableWidget(0, 2, this);
     m_sysInfoTable->setHorizontalHeaderLabels({"Параметр", "Значення"});
     m_sysInfoTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_sysInfoTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_sysInfoTable->setMaximumHeight(150);
+    m_sysInfoTable->setMaximumHeight(120);
     lay->addWidget(m_sysInfoTable);
 
     // ── Three compact progress bars ──
@@ -214,10 +287,11 @@ void MainWindow::setupUI()
 
     m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
 
-    // Corner widget for Settings
-    auto* btnSettings = new QPushButton("⚙️", this);
+    // Corner widget for Settings — use Unicode gear (U+2699) which renders in all fonts
+    auto* btnSettings = new QPushButton(QString(QChar(0x2699)), this);
     btnSettings->setToolTip("Налаштування програми");
-    btnSettings->setFixedSize(30, 30);
+    btnSettings->setFixedSize(32, 28);
+    btnSettings->setStyleSheet("font-size: 16px; padding: 0px;");
     connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
     m_tabWidget->setCornerWidget(btnSettings, Qt::TopRightCorner);
 
@@ -375,6 +449,11 @@ void MainWindow::refreshAnomaliesUI()
 {
     auto anomalies = m_alerts->activeAnomalies();
     
+    // Show/hide placeholder
+    bool hasAnomalies = !anomalies.isEmpty();
+    m_noAnomaliesLabel->setVisible(!hasAnomalies);
+    m_anomaliesTable->setVisible(hasAnomalies);
+
     // Disable sorting during update
     m_anomaliesTable->setSortingEnabled(false);
     m_anomaliesTable->setRowCount(anomalies.size());
@@ -451,7 +530,9 @@ void MainWindow::saveLogsToCsv()
     default: return;
     }
 
-    QDir dir("Logs/" + folder);
+    QString basePath = m_settings->logSavePath;
+    if (basePath.isEmpty()) basePath = "Logs";
+    QDir dir(basePath + "/" + folder);
     if (!dir.exists()) dir.mkpath(".");
 
     QString fname = dir.path() + "/Log_" +
@@ -554,41 +635,85 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
     return QMainWindow::nativeEvent(eventType, message, result);
 }
 
-// ─────────────────────────────── QSS dark style ───────────────────────
+// ─────────────────────────────── Dynamic Theme ────────────────────────
 
 void MainWindow::applyModernStyle()
 {
-    setStyleSheet(R"(
-        QMainWindow, QWidget { background-color: #1e1e1e; color: #d4d4d4;
-                               font-family: 'Segoe UI', Arial; font-size: 13px; }
+    bool isDark = (m_settings->appTheme == "dark");
 
-        QTabWidget::pane   { border: 1px solid #333; background: #252526; border-radius: 4px; }
-        QTabBar::tab       { background: #2d2d30; border: 1px solid #333; padding: 9px 18px;
-                             border-radius: 4px 4px 0 0; margin-right: 2px; }
-        QTabBar::tab:selected { background: #3f3f46; color: #fff; font-weight: bold; }
-        QTabBar::tab:hover { background: #3e3e42; }
+    if (isDark) {
+        setStyleSheet(R"(
+            QMainWindow, QWidget { background-color: #1e1e1e; color: #d4d4d4;
+                                   font-family: 'Segoe UI', Arial; font-size: 13px; }
 
-        QTableWidget       { background: #1e1e1e; alternate-background-color: #252526;
-                             border: none; gridline-color: #333;
-                             selection-background-color: #094771; }
-        QHeaderView::section { background: #2d2d30; padding: 6px; border: 1px solid #1e1e1e;
-                               color: #fff; font-weight: bold; }
+            QTabWidget::pane   { border: 1px solid #333; background: #252526; border-radius: 4px; }
+            QTabBar::tab       { background: #2d2d30; border: 1px solid #333; padding: 9px 18px;
+                                 border-radius: 4px 4px 0 0; margin-right: 2px; }
+            QTabBar::tab:selected { background: #3f3f46; color: #fff; font-weight: bold; }
+            QTabBar::tab:hover { background: #3e3e42; }
 
-        QPushButton        { background: #0e639c; color: #fff; border: none;
-                             padding: 7px 22px; border-radius: 4px; font-weight: bold; }
-        QPushButton:hover  { background: #1177bb; }
-        QPushButton:pressed{ background: #094771; }
+            QTableWidget       { background: #1e1e1e; alternate-background-color: #252526;
+                                 border: none; gridline-color: #333;
+                                 selection-background-color: #094771; }
+            QHeaderView::section { background: #2d2d30; padding: 6px; border: 1px solid #1e1e1e;
+                                   color: #fff; font-weight: bold; }
 
-        QProgressBar       { border: 1px solid #444; background: #2d2d30;
-                             border-radius: 4px; text-align: center; color: #fff;
-                             font-weight: bold; height: 22px; }
-        QProgressBar::chunk{ background: #0e639c; border-radius: 3px; }
+            QPushButton        { background: #0e639c; color: #fff; border: none;
+                                 padding: 7px 22px; border-radius: 4px; font-weight: bold; }
+            QPushButton:hover  { background: #1177bb; }
+            QPushButton:pressed{ background: #094771; }
 
-        QGroupBox          { border: 1px solid #333; border-radius: 4px;
-                             margin-top: 6px; padding-top: 4px; }
-        QGroupBox::title   { subcontrol-origin: margin; left: 8px; color: #9d9d9d; }
+            QProgressBar       { border: 1px solid #444; background: #2d2d30;
+                                 border-radius: 4px; text-align: center; color: #fff;
+                                 font-weight: bold; height: 22px; }
+            QProgressBar::chunk{ background: #0e639c; border-radius: 3px; }
 
-        QScrollBar:vertical { background: #252526; width: 8px; border-radius: 4px; }
-        QScrollBar::handle:vertical { background: #555; border-radius: 4px; }
-    )");
+            QGroupBox          { border: 1px solid #333; border-radius: 4px;
+                                 margin-top: 6px; padding-top: 4px; }
+            QGroupBox::title   { subcontrol-origin: margin; left: 8px; color: #9d9d9d; }
+
+            QScrollBar:vertical { background: #252526; width: 8px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #555; border-radius: 4px; }
+
+            QLabel             { color: #d4d4d4; }
+            QComboBox, QSpinBox, QDoubleSpinBox { background: #2d2d30; color: #d4d4d4; border: 1px solid #444; padding: 3px; }
+        )");
+    } else {
+        setStyleSheet(R"(
+            QMainWindow, QWidget { background-color: #f0f0f0; color: #1e1e1e;
+                                   font-family: 'Segoe UI', Arial; font-size: 13px; }
+
+            QTabWidget::pane   { border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+            QTabBar::tab       { background: #e0e0e0; border: 1px solid #ccc; padding: 9px 18px;
+                                 border-radius: 4px 4px 0 0; margin-right: 2px; color: #333; }
+            QTabBar::tab:selected { background: #fff; color: #000; font-weight: bold; }
+            QTabBar::tab:hover { background: #d0d0d0; }
+
+            QTableWidget       { background: #fff; alternate-background-color: #f5f5f5;
+                                 border: none; gridline-color: #ddd;
+                                 selection-background-color: #cce8ff; color: #1e1e1e; }
+            QHeaderView::section { background: #e8e8e8; padding: 6px; border: 1px solid #ccc;
+                                   color: #333; font-weight: bold; }
+
+            QPushButton        { background: #0078d4; color: #fff; border: none;
+                                 padding: 7px 22px; border-radius: 4px; font-weight: bold; }
+            QPushButton:hover  { background: #106ebe; }
+            QPushButton:pressed{ background: #005a9e; }
+
+            QProgressBar       { border: 1px solid #ccc; background: #e0e0e0;
+                                 border-radius: 4px; text-align: center; color: #333;
+                                 font-weight: bold; height: 22px; }
+            QProgressBar::chunk{ background: #0078d4; border-radius: 3px; }
+
+            QGroupBox          { border: 1px solid #ccc; border-radius: 4px;
+                                 margin-top: 6px; padding-top: 4px; }
+            QGroupBox::title   { subcontrol-origin: margin; left: 8px; color: #666; }
+
+            QScrollBar:vertical { background: #f0f0f0; width: 8px; border-radius: 4px; }
+            QScrollBar::handle:vertical { background: #bbb; border-radius: 4px; }
+
+            QLabel             { color: #1e1e1e; }
+            QComboBox, QSpinBox, QDoubleSpinBox { background: #fff; color: #1e1e1e; border: 1px solid #ccc; padding: 3px; }
+        )");
+    }
 }

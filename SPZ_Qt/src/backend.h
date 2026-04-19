@@ -18,11 +18,13 @@
 #include "baseline_tracker.h"
 #include "anomaly_engine.h"
 #include "process_scanner.h"
+#include "settings_manager.h"
 
 // ─────────────────────── FsWorker ────────────────────────
 class FsWorker : public QObject {
     Q_OBJECT
 public:
+    QStringList m_watchPaths; // set before starting thread
     void doWork();
 signals:
     void fileEvent(const QString& time, const QString& event, const QString& msg);
@@ -32,7 +34,7 @@ signals:
 class Backend : public QObject {
     Q_OBJECT
 public:
-    explicit Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, QObject *parent = nullptr);
+    explicit Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, SettingsManager* settings, QObject *parent = nullptr);
     ~Backend();
 
     void startMonitoring();

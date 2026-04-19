@@ -56,6 +56,7 @@ private:
 
     QTableWidget* m_anomaliesTable;  // New anomalies UI
     QLabel*       m_healthScoreLabel;// Dynamic label
+    QLabel*       m_noAnomaliesLabel;// Placeholder when empty
 
     QTableWidget* m_processTable;
     QTableWidget* m_sysInfoTable;

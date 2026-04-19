@@ -10,6 +10,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QTabWidget>
+#include <QLineEdit>
+#include <QListWidget>
 
 #include "settings_manager.h"
 
@@ -43,6 +45,9 @@ private:
     QComboBox*      m_appTheme;
     QComboBox*      m_processPromptLevel;
     QCheckBox*      m_showTrustLevel;
+
+    QLineEdit*      m_logSavePath;
+    QListWidget*    m_watchedFoldersList;
 
     void setupUI();
     void loadFromManager();

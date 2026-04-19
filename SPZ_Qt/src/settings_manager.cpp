@@ -26,6 +26,9 @@ void SettingsManager::resetToDefaults()
     appTheme          = "dark";
     processPromptLevel= 1; // 1 = Important/System only
     showTrustLevel    = true;
+
+    logSavePath       = "Logs";
+    watchedFolders    = QStringList{"C:\\Users"};
 }
 
 void SettingsManager::load()
@@ -56,6 +59,11 @@ void SettingsManager::load()
     processPromptLevel= settings.value("processPromptLevel", 1).toInt();
     showTrustLevel    = settings.value("showTrustLevel", true).toBool();
     settings.endGroup();
+
+    settings.beginGroup("Paths");
+    logSavePath       = settings.value("logSavePath", "Logs").toString();
+    watchedFolders    = settings.value("watchedFolders", QStringList{"C:\\Users"}).toStringList();
+    settings.endGroup();
 }
 
 void SettingsManager::save()
@@ -85,6 +93,11 @@ void SettingsManager::save()
     settings.setValue("appTheme", appTheme);
     settings.setValue("processPromptLevel", processPromptLevel);
     settings.setValue("showTrustLevel", showTrustLevel);
+    settings.endGroup();
+
+    settings.beginGroup("Paths");
+    settings.setValue("logSavePath", logSavePath);
+    settings.setValue("watchedFolders", watchedFolders);
     settings.endGroup();
 
     emit settingsChanged();

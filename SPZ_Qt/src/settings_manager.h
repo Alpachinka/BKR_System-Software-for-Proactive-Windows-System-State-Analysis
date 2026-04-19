@@ -30,6 +30,9 @@ public:
     int processPromptLevel;   // 0=All, 1=System Only, 2=None
     bool showTrustLevel;      // true/false
 
+    QString logSavePath;      // Path for saving CSV logs
+    QStringList watchedFolders; // Folders for file watcher
+
 signals:
     void settingsChanged();
 };

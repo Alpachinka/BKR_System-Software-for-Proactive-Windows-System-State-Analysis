@@ -16,7 +16,7 @@ static ULONGLONG FileTimeToULL(const FILETIME& ft)
 
 // ───────────────────────────── Backend ─────────────────────────────
 
-Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, QObject *parent)
+Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, SettingsManager* settings, QObject *parent)
     : QObject(parent), m_db(db), m_baseline(baseline), m_anomalyEngine(anomalyEx), m_scanner(scanner)
 {
     m_activeTimer = new QTimer(this);
@@ -31,6 +31,7 @@ Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomaly
     // File-system watcher on a separate thread
     m_fsThread = new QThread(this);
     FsWorker* worker = new FsWorker();
+    worker->m_watchPaths = settings->watchedFolders;
     worker->moveToThread(m_fsThread);
 
     connect(m_fsThread, &QThread::started, worker, &FsWorker::doWork);
@@ -341,27 +342,60 @@ int Backend::ReadGpuUsage()
 
 void FsWorker::doWork()
 {
-    const QString path = "C:\\Users";
-    HANDLE hDir = FindFirstChangeNotificationW(
-        path.toStdWString().c_str(), TRUE,
-        FILE_NOTIFY_CHANGE_FILE_NAME |
-        FILE_NOTIFY_CHANGE_DIR_NAME  |
-        FILE_NOTIFY_CHANGE_LAST_WRITE);
+    // Monitor each directory in m_watchPaths
+    for (const QString& path : m_watchPaths) {
+        // Each path runs in the same thread sequentially via overlapped IO
+        HANDLE hDir = CreateFileW(
+            path.toStdWString().c_str(),
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            nullptr);
 
-    if (hDir == INVALID_HANDLE_VALUE) return;
+        if (hDir == INVALID_HANDLE_VALUE) continue;
 
-    while (true) {
-        DWORD status = WaitForSingleObject(hDir, INFINITE);
-        if (status != WAIT_OBJECT_0) break;
+        BYTE buffer[4096];
+        DWORD bytesReturned;
 
-        emit fileEvent(
-            QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
-            "Зміна у файлах",
-            "Виявлено зміну в: " + path);
+        // Run monitoring loop for this directory
+        while (ReadDirectoryChangesW(
+                   hDir, buffer, sizeof(buffer), TRUE,
+                   FILE_NOTIFY_CHANGE_FILE_NAME |
+                   FILE_NOTIFY_CHANGE_DIR_NAME |
+                   FILE_NOTIFY_CHANGE_LAST_WRITE |
+                   FILE_NOTIFY_CHANGE_CREATION,
+                   &bytesReturned, nullptr, nullptr))
+        {
+            FILE_NOTIFY_INFORMATION* fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(buffer);
 
-        FindNextChangeNotification(hDir);
+            while (true) {
+                QString fileName = QString::fromWCharArray(fni->FileName, fni->FileNameLength / sizeof(WCHAR));
+
+                QString action;
+                switch (fni->Action) {
+                case FILE_ACTION_ADDED:            action = "Створено"; break;
+                case FILE_ACTION_REMOVED:          action = "Видалено"; break;
+                case FILE_ACTION_MODIFIED:         action = "Змінено"; break;
+                case FILE_ACTION_RENAMED_OLD_NAME: action = "Перейменовано (старе)"; break;
+                case FILE_ACTION_RENAMED_NEW_NAME: action = "Перейменовано (нове)"; break;
+                default:                           action = "Невідома дія"; break;
+                }
+
+                emit fileEvent(
+                    QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
+                    action,
+                    path + "\\" + fileName);
+
+                if (fni->NextEntryOffset == 0) break;
+                fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(
+                    reinterpret_cast<BYTE*>(fni) + fni->NextEntryOffset);
+            }
+        }
+
+        CloseHandle(hDir);
     }
-    FindCloseChangeNotification(hDir);
 }
 
 // ───────────────── Network COM handler ─────────────────────────────

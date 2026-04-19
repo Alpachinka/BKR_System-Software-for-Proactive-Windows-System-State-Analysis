@@ -13,18 +13,19 @@ AlertManager::AlertManager(Database* db, RecommendEngine* recommender, QObject* 
     m_trayIcon->setIcon(QApplication::style()->standardIcon(QStyle::SP_ComputerIcon));
     m_trayIcon->setToolTip("SPZ System Monitor");
     
-    QMenu* trayMenu = new QMenu();
-    QAction* openAction = trayMenu->addAction("Розгорнути (Open)");
-    connect(openAction, &QAction::triggered, this, &AlertManager::showMainWindowRequested);
-    
-    QAction* exitAction = trayMenu->addAction("Вийти (Exit)");
-    connect(exitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+    // Context menu for tray icon — must have a parent to stay alive
+    auto* trayMenu = new QMenu();
+    trayMenu->addAction("Розгорнути", [this]() { emit showMainWindowRequested(); });
+    trayMenu->addSeparator();
+    trayMenu->addAction("Вийти", qApp, &QCoreApplication::quit);
 
     m_trayIcon->setContextMenu(trayMenu);
     m_trayIcon->show();
 
+    // Single click or double click both open the window
     connect(m_trayIcon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
-        if (reason == QSystemTrayIcon::DoubleClick) {
+        if (reason == QSystemTrayIcon::DoubleClick ||
+            reason == QSystemTrayIcon::Trigger) {
             emit showMainWindowRequested();
         }
     });
