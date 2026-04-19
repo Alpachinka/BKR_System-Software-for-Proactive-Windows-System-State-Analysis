@@ -295,8 +295,7 @@ void MainWindow::setupUI()
     // We actually need to change how the tab widget and button are laid out.
     // Let's create an overlay button.
     auto* btnSettings = new QPushButton(m_tabWidget); // Child of tab widget so it floats above
-    btnSettings->setText(QString(QChar(0xE713)));
-    btnSettings->setFont(QFont("Segoe MDL2 Assets", 12));
+    btnSettings->setText(QString(QChar(0x2699))); // Standard Unicode gear, works everywhere
     btnSettings->setToolTip("Налаштування програми");
     btnSettings->setFixedSize(30, 26);
     btnSettings->setStyleSheet(
@@ -304,7 +303,8 @@ void MainWindow::setupUI()
         "  background: transparent; "
         "  border: none; "
         "  color: #888; "
-        "  font-size: 14px; "
+        "  font-family: 'Segoe UI Symbol', 'Segoe UI', Arial; "
+        "  font-size: 16px; "
         "  margin: 0px; "
         "  padding: 0px; "
         "}"
