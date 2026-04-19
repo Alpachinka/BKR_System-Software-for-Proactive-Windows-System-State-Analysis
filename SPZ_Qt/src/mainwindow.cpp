@@ -45,6 +45,7 @@ MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* an
 
     connect(m_anomalyEngine, &AnomalyEngine::healthScoreChanged, this, &MainWindow::updateHealthScore);
     connect(m_alerts, &AlertManager::alertsChanged, this, &MainWindow::refreshAnomaliesUI);
+    connect(m_backend, &Backend::connectionsUpdated, this, &MainWindow::updateNetworkConnections);
 
     connect(m_btnSave,  &QPushButton::clicked, this, &MainWindow::saveLogsToCsv);
     connect(m_btnClear, &QPushButton::clicked, this, &MainWindow::clearCurrentLog);
@@ -164,6 +165,15 @@ static QString queryRegistryString(HKEY root, const wchar_t* path, const wchar_t
     return "—";
 }
 
+static DWORD queryRegistryDWORD(HKEY root, const wchar_t* path, const wchar_t* key, DWORD defaultVal = 0)
+{
+    DWORD val = 0;
+    DWORD size = sizeof(val);
+    if (RegGetValueW(root, path, key, RRF_RT_REG_DWORD, nullptr, &val, &size) == ERROR_SUCCESS)
+        return val;
+    return defaultVal;
+}
+
 QWidget* MainWindow::buildSystemTab()
 {
     QWidget* tab = new QWidget(this);
@@ -258,6 +268,109 @@ QWidget* MainWindow::buildSystemTab()
     return tab;
 }
 
+// ─────────────────────────────── Network tab ──────────────────────────
+
+QWidget* MainWindow::buildNetworkTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay = new QVBoxLayout(tab);
+    lay->setSpacing(8);
+    lay->setContentsMargins(8, 8, 8, 8);
+
+    QLabel* title = new QLabel("Активні мережеві з'єднання (Network Analyzer)", this);
+    title->setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 4px;");
+    lay->addWidget(title);
+
+    m_networkConnTable = new QTableWidget(0, 5, this);
+    m_networkConnTable->setHorizontalHeaderLabels({"Протокол", "Локальна адреса", "Віддалена адреса", "Стан", "PID"});
+    m_networkConnTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_networkConnTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_networkConnTable->setSortingEnabled(true);
+    lay->addWidget(m_networkConnTable);
+
+    return tab;
+}
+
+// ─────────────────────────────── Security tab ─────────────────────────
+
+QWidget* MainWindow::buildSecurityTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay = new QVBoxLayout(tab);
+    lay->setSpacing(10);
+    lay->setContentsMargins(16, 16, 16, 16);
+
+    QLabel* title = new QLabel("Аудит безпеки Windows", this);
+    title->setStyleSheet("font-size: 20px; font-weight: bold; margin-bottom: 10px;");
+    lay->addWidget(title);
+
+    int score = 0;
+    int maxScore = 0;
+
+    auto addCheck = [&](const QString& name, bool isOk, const QString& okMsg, const QString& badMsg) {
+        maxScore += 25;
+        if (isOk) score += 25;
+
+        QFrame* card = new QFrame(this);
+        card->setStyleSheet("QFrame { background: #1e1e1e; border-radius: 8px; padding: 10px; }");
+        auto* cardLay = new QHBoxLayout(card);
+        
+        QLabel* icon = new QLabel(isOk ? "✅" : "❌", this);
+        icon->setStyleSheet("font-size: 24px;");
+        cardLay->addWidget(icon);
+
+        auto* textLay = new QVBoxLayout();
+        QLabel* lblName = new QLabel(name, this);
+        lblName->setStyleSheet("font-size: 16px; font-weight: bold;");
+        QLabel* lblDesc = new QLabel(isOk ? okMsg : badMsg, this);
+        lblDesc->setStyleSheet(isOk ? "color: #81c784; font-size: 14px;" : "color: #e57373; font-size: 14px;");
+        textLay->addWidget(lblName);
+        textLay->addWidget(lblDesc);
+        
+        cardLay->addLayout(textLay);
+        cardLay->addStretch();
+        
+        lay->addWidget(card);
+    };
+
+    // 1. UAC (User Account Control)
+    DWORD uac = queryRegistryDWORD(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", L"EnableLUA", 1);
+    addCheck("User Account Control (UAC)", uac == 1, 
+             "UAC увімкнено. Система захищена від несанкціонованих змін.", 
+             "УВАГА: UAC вимкнено! Будь-яка програма може отримати права адміністратора.");
+
+    // 2. Windows Defender (AntiSpyware)
+    DWORD def = queryRegistryDWORD(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Policies\\Microsoft\\Windows Defender", L"DisableAntiSpyware", 0);
+    addCheck("Антивірусний захист (Windows Defender)", def == 0, 
+             "Windows Defender активний.", 
+             "УВАГА: Windows Defender вимкнено через політики!");
+
+    // 3. Secure Boot
+    DWORD sb = queryRegistryDWORD(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State", L"UEFISecureBootEnabled", 0);
+    addCheck("Secure Boot (Безпечне завантаження)", sb == 1, 
+             "Secure Boot увімкнено. Захист від руткітів активний.", 
+             "Secure Boot вимкнено або не підтримується.");
+
+    // 4. Windows Firewall
+    DWORD fw = queryRegistryDWORD(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\StandardProfile", L"EnableFirewall", 1);
+    addCheck("Брандмауер Windows (Firewall)", fw == 1, 
+             "Брандмауер увімкнено. Мережеві атаки блокуються.", 
+             "УВАГА: Брандмауер для стандартного профілю вимкнено!");
+
+    lay->addSpacing(20);
+    
+    // Overall Score
+    QLabel* scoreLabel = new QLabel(QString("Загальна оцінка безпеки: %1 / %2").arg(score).arg(maxScore), this);
+    QString scoreColor = (score == maxScore) ? "#81c784" : ((score >= 50) ? "#ffb74d" : "#e57373");
+    scoreLabel->setStyleSheet(QString("font-size: 24px; font-weight: bold; color: %1;").arg(scoreColor));
+    scoreLabel->setAlignment(Qt::AlignCenter);
+    lay->addWidget(scoreLabel);
+
+    lay->addStretch();
+
+    return tab;
+}
+
 // ─────────────────────────────── setupUI ──────────────────────────────
 
 void MainWindow::setupUI()
@@ -324,7 +437,13 @@ void MainWindow::setupUI()
     // Tab 2: System
     m_tabWidget->addTab(buildSystemTab(), "Системні Ресурси");
 
-    // Tab 3: Logs (with inner sub-tabs)
+    // Tab 3: Network
+    m_tabWidget->addTab(buildNetworkTab(), "Мережа");
+
+    // Tab 4: Security
+    m_tabWidget->addTab(buildSecurityTab(), "Аудит Безпеки");
+
+    // Tab 5: Logs (with inner sub-tabs)
     QWidget* logsTab = new QWidget(this);
     auto* logsLay    = new QVBoxLayout(logsTab);
     logsLay->setContentsMargins(4, 6, 4, 4);
@@ -402,6 +521,27 @@ void MainWindow::updateProcesses(const std::vector<ProcessData>& procs)
         m_processTable->setItem(i, 3, itemTrust);
     }
     m_processTable->setSortingEnabled(true);
+}
+
+void MainWindow::updateNetworkConnections(const std::vector<NetworkConnection>& conns)
+{
+    m_networkConnTable->setSortingEnabled(false);
+    m_networkConnTable->setRowCount(static_cast<int>(conns.size()));
+
+    for (int i = 0; i < static_cast<int>(conns.size()); ++i) {
+        const auto& c = conns[i];
+        m_networkConnTable->setItem(i, 0, new QTableWidgetItem(c.protocol));
+        m_networkConnTable->setItem(i, 1, new QTableWidgetItem(c.localAddr));
+        m_networkConnTable->setItem(i, 2, new QTableWidgetItem(c.remoteAddr));
+        
+        auto* stateItem = new QTableWidgetItem(c.state);
+        if (c.state == "ESTABLISHED") stateItem->setForeground(QBrush(QColor("#81c784"))); // Green
+        else if (c.state == "LISTEN") stateItem->setForeground(QBrush(QColor("#4fc3f7"))); // Blue
+        m_networkConnTable->setItem(i, 3, stateItem);
+        
+        m_networkConnTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.pid)));
+    }
+    m_networkConnTable->setSortingEnabled(true);
 }
 
 void MainWindow::updateSystemInfo(const SystemData& d)
@@ -534,13 +674,6 @@ void MainWindow::ackAllAnomalies()
 
 void MainWindow::saveLogsToCsv()
 {
-    // Logs outer tab is index 3 now
-    if (m_tabWidget->currentIndex() != 3) {
-        QMessageBox::information(this, "Увага",
-            "Перейдіть на вкладку \"Логи\" перед збереженням.");
-        return;
-    }
-
     int sub = m_logsTabWidget->currentIndex();
 
     QTableWidget* tbl = nullptr;

@@ -44,4 +44,4 @@ add_executable(SPZ_Qt WIN32 ${SOURCES})
 
 # Link libraries
 target_link_libraries(SPZ_Qt PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Charts Qt6::Sql Qt6::Network)
-target_link_libraries(SPZ_Qt PRIVATE pdh.lib psapi.lib) # Windows Perf Counters
+target_link_libraries(SPZ_Qt PRIVATE pdh.lib psapi.lib iphlpapi.lib ws2_32.lib) # Windows Perf Counters + Network

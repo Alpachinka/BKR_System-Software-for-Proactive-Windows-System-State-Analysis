@@ -32,6 +32,7 @@ public:
 
     QString logSavePath;      // Path for saving CSV logs
     QStringList watchedFolders; // Folders for file watcher
+    bool enableNetworkScanner;// Deep network scanning and ping
 
 signals:
     void settingsChanged();

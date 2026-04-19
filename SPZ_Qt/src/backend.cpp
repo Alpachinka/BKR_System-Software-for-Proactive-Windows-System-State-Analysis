@@ -1,8 +1,15 @@
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <icmpapi.h>
 #include "backend.h"
 #include <QDateTime>
 #include <QDebug>
 #include <psapi.h>
 #include <tlhelp32.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -39,12 +46,29 @@ Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomaly
             [this](const QString& t, const QString& e, const QString& msg) {
                 emit fileSystemEventLogged(t, e, msg);
             });
+
+    // Network watcher on a separate thread
+    m_netThread = new QThread(this);
+    m_netWorker = new NetworkWorker();
+    m_netWorker->m_enableScanner = settings->enableNetworkScanner;
+    m_netWorker->moveToThread(m_netThread);
+
+    connect(m_netThread, &QThread::started, m_netWorker, &NetworkWorker::doWork);
+    connect(m_netWorker, &NetworkWorker::networkEventLogged, this,
+            [this](const QString& t, const QString& e, const QString& msg) {
+                emit networkEventLogged(t, e, msg);
+            });
+    connect(m_netWorker, &NetworkWorker::connectionsUpdated, this, &Backend::connectionsUpdated);
 }
 
 Backend::~Backend()
 {
     m_fsThread->quit();
     m_fsThread->wait();
+    
+    m_netWorker->m_stop = true;
+    m_netThread->quit();
+    m_netThread->wait();
 }
 
 void Backend::startMonitoring()
@@ -55,6 +79,7 @@ void Backend::startMonitoring()
     m_sysTimer->start(1000);
     m_processLogTimer->start(2000);
     m_fsThread->start();
+    m_netThread->start();
 }
 
 QString Backend::GetCurrentTimeString()
@@ -396,6 +421,112 @@ void FsWorker::doWork()
 
         CloseHandle(hDir);
     }
+}
+
+// ───────────────── NetworkWorker (TCP/UDP and Ping) ──────────────────
+
+static QString FormatIpAddress(DWORD ip) {
+    struct in_addr ipAddr;
+    ipAddr.S_un.S_addr = ip;
+    return QString::fromLatin1(inet_ntoa(ipAddr));
+}
+
+static QString GetTcpStateString(DWORD state) {
+    switch (state) {
+        case MIB_TCP_STATE_CLOSED: return "CLOSED";
+        case MIB_TCP_STATE_LISTEN: return "LISTEN";
+        case MIB_TCP_STATE_SYN_SENT: return "SYN_SENT";
+        case MIB_TCP_STATE_SYN_RCVD: return "SYN_RCVD";
+        case MIB_TCP_STATE_ESTAB: return "ESTABLISHED";
+        case MIB_TCP_STATE_FIN_WAIT1: return "FIN_WAIT1";
+        case MIB_TCP_STATE_FIN_WAIT2: return "FIN_WAIT2";
+        case MIB_TCP_STATE_CLOSE_WAIT: return "CLOSE_WAIT";
+        case MIB_TCP_STATE_CLOSING: return "CLOSING";
+        case MIB_TCP_STATE_LAST_ACK: return "LAST_ACK";
+        case MIB_TCP_STATE_TIME_WAIT: return "TIME_WAIT";
+        case MIB_TCP_STATE_DELETE_TCB: return "DELETE_TCB";
+        default: return "UNKNOWN";
+    }
+}
+
+void NetworkWorker::doWork()
+{
+    HANDLE hIcmpFile = IcmpCreateFile();
+    DWORD ipaddr = inet_addr("8.8.8.8");
+    char sendData[32] = "Data Buffer";
+    DWORD replySize = sizeof(ICMP_ECHO_REPLY) + sizeof(sendData);
+    void* replyBuffer = malloc(replySize);
+
+    while (!m_stop) {
+        if (!m_enableScanner) {
+            QThread::sleep(2);
+            continue;
+        }
+
+        std::vector<NetworkConnection> conns;
+
+        // --- Get TCP Connections ---
+        DWORD tcpSize = 0;
+        GetExtendedTcpTable(nullptr, &tcpSize, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+        if (tcpSize > 0) {
+            PMIB_TCPTABLE_OWNER_PID pTcpTable = (PMIB_TCPTABLE_OWNER_PID)malloc(tcpSize);
+            if (GetExtendedTcpTable(pTcpTable, &tcpSize, FALSE, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0) == NO_ERROR) {
+                for (DWORD i = 0; i < pTcpTable->dwNumEntries; i++) {
+                    NetworkConnection conn;
+                    conn.protocol = "TCP";
+                    conn.localAddr = FormatIpAddress(pTcpTable->table[i].dwLocalAddr) + ":" + QString::number(ntohs((u_short)pTcpTable->table[i].dwLocalPort));
+                    conn.remoteAddr = FormatIpAddress(pTcpTable->table[i].dwRemoteAddr) + ":" + QString::number(ntohs((u_short)pTcpTable->table[i].dwRemotePort));
+                    conn.state = GetTcpStateString(pTcpTable->table[i].dwState);
+                    conn.pid = pTcpTable->table[i].dwOwningPid;
+                    conns.push_back(conn);
+                }
+            }
+            free(pTcpTable);
+        }
+
+        // --- Get UDP Connections ---
+        DWORD udpSize = 0;
+        GetExtendedUdpTable(nullptr, &udpSize, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0);
+        if (udpSize > 0) {
+            PMIB_UDPTABLE_OWNER_PID pUdpTable = (PMIB_UDPTABLE_OWNER_PID)malloc(udpSize);
+            if (GetExtendedUdpTable(pUdpTable, &udpSize, FALSE, AF_INET, UDP_TABLE_OWNER_PID, 0) == NO_ERROR) {
+                for (DWORD i = 0; i < pUdpTable->dwNumEntries; i++) {
+                    NetworkConnection conn;
+                    conn.protocol = "UDP";
+                    conn.localAddr = FormatIpAddress(pUdpTable->table[i].dwLocalAddr) + ":" + QString::number(ntohs((u_short)pUdpTable->table[i].dwLocalPort));
+                    conn.remoteAddr = "*:*";
+                    conn.state = "—";
+                    conn.pid = pUdpTable->table[i].dwOwningPid;
+                    conns.push_back(conn);
+                }
+            }
+            free(pUdpTable);
+        }
+
+        emit connectionsUpdated(conns);
+
+        // --- Ping (Stability) ---
+        if (hIcmpFile != INVALID_HANDLE_VALUE) {
+            DWORD ret = IcmpSendEcho(hIcmpFile, ipaddr, sendData, sizeof(sendData), nullptr, replyBuffer, replySize, 1000);
+            if (ret != 0) {
+                PICMP_ECHO_REPLY pEchoReply = (PICMP_ECHO_REPLY)replyBuffer;
+                int latency = pEchoReply->RoundTripTime;
+                bool anomaly = (latency > 500); // 500ms threshold
+                emit pingResult(latency, 0.0, anomaly);
+                if (anomaly) {
+                    emit networkEventLogged(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "Пінг", "Висока затримка мережі: " + QString::number(latency) + " ms");
+                }
+            } else {
+                emit pingResult(0, 100.0, true); // 100% loss
+                emit networkEventLogged(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "Пінг", "Втрата пакетів (Request Timed Out)");
+            }
+        }
+
+        QThread::sleep(2); // Scan every 2 seconds
+    }
+
+    if (hIcmpFile != INVALID_HANDLE_VALUE) IcmpCloseHandle(hIcmpFile);
+    free(replyBuffer);
 }
 
 // ───────────────── Network COM handler ─────────────────────────────

@@ -29,6 +29,7 @@ void SettingsManager::resetToDefaults()
 
     logSavePath       = "Logs";
     watchedFolders    = QStringList{"C:\\Users"};
+    enableNetworkScanner = true;
 }
 
 void SettingsManager::load()
@@ -63,6 +64,7 @@ void SettingsManager::load()
     settings.beginGroup("Paths");
     logSavePath       = settings.value("logSavePath", "Logs").toString();
     watchedFolders    = settings.value("watchedFolders", QStringList{"C:\\Users"}).toStringList();
+    enableNetworkScanner = settings.value("enableNetworkScanner", true).toBool();
     settings.endGroup();
 }
 
@@ -98,6 +100,7 @@ void SettingsManager::save()
     settings.beginGroup("Paths");
     settings.setValue("logSavePath", logSavePath);
     settings.setValue("watchedFolders", watchedFolders);
+    settings.setValue("enableNetworkScanner", enableNetworkScanner);
     settings.endGroup();
 
     emit settingsChanged();

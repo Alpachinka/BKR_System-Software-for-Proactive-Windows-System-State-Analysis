@@ -34,6 +34,7 @@ protected:
 private slots:
     void updateProcesses(const std::vector<ProcessData>& processes);
     void updateSystemInfo(const SystemData& sysData);
+    void updateNetworkConnections(const std::vector<NetworkConnection>& conns);
     void appendLog(QTableWidget* table, const QString& time,
                    const QString& event, const QString& details);
     void saveLogsToCsv();
@@ -62,6 +63,8 @@ private:
 
     QTableWidget* m_processTable;
     QTableWidget* m_sysInfoTable;
+    QTableWidget* m_networkConnTable;
+
     QTableWidget* m_processLogTable;
     QTableWidget* m_sysLogTable;
     QTableWidget* m_networkLogTable;
@@ -87,6 +90,8 @@ private:
     QTableWidget* createLogTable();
     QChartView*   createResourceChart();
     QWidget*      buildSystemTab();
+    QWidget*      buildNetworkTab();
+    QWidget*      buildSecurityTab();
     QWidget*      buildAnomaliesTab();
     void applyModernStyle();
 };

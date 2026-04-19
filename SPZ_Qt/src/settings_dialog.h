@@ -45,6 +45,7 @@ private:
     QComboBox*      m_appTheme;
     QComboBox*      m_processPromptLevel;
     QCheckBox*      m_showTrustLevel;
+    QCheckBox*      m_enableNetworkScanner;
 
     QLineEdit*      m_logSavePath;
     QListWidget*    m_watchedFoldersList;

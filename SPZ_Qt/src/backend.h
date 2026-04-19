@@ -30,6 +30,27 @@ signals:
     void fileEvent(const QString& time, const QString& event, const QString& msg);
 };
 
+// ─────────────────────── NetworkWorker ─────────────────────
+struct NetworkConnection {
+    QString protocol;
+    QString localAddr;
+    QString remoteAddr;
+    QString state;
+    DWORD pid;
+};
+
+class NetworkWorker : public QObject {
+    Q_OBJECT
+public:
+    bool m_enableScanner = true;
+    bool m_stop = false;
+    void doWork();
+signals:
+    void connectionsUpdated(const std::vector<NetworkConnection>& conns);
+    void pingResult(int latency, double loss, bool isAnomaly);
+    void networkEventLogged(const QString& time, const QString& event, const QString& details);
+};
+
 // ─────────────────────── Backend ─────────────────────────
 class Backend : public QObject {
     Q_OBJECT
@@ -50,6 +71,7 @@ public:
 signals:
     void processesUpdated(const std::vector<ProcessData>& processes);
     void systemInfoUpdated(const SystemData& sysData);
+    void connectionsUpdated(const std::vector<NetworkConnection>& conns);
 
     void processEventLogged(const QString& time, const QString& event, const QString& details);
     void systemEventLogged(const QString& time, const QString& event, const QString& details);
@@ -83,6 +105,8 @@ private:
     std::set<DWORD> m_previousProcessIds;
 
     QThread* m_fsThread;
+    QThread* m_netThread;
+    NetworkWorker* m_netWorker;
 
     // GPU via PDH
     PDH_HQUERY   m_gpuQuery     = nullptr;

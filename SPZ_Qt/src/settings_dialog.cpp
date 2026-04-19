@@ -35,6 +35,7 @@ void SettingsDialog::setupUI()
     m_cooldownSecs->setRange(0, 3600);
 
     m_showTrustLevel = new QCheckBox("Показувати довіру (System/User)", this);
+    m_enableNetworkScanner = new QCheckBox("Увімкнути глибокий аналіз мережі", this);
     
     m_processPromptLevel = new QComboBox(this);
     m_processPromptLevel->addItem("На всіх процесах", 0);
@@ -44,6 +45,7 @@ void SettingsDialog::setupUI()
     formGen->addRow("Тема інтерфейсу:", m_appTheme);
     formGen->addRow("Запит перед діями над процесом:", m_processPromptLevel);
     formGen->addRow("", m_showTrustLevel);
+    formGen->addRow("", m_enableNetworkScanner);
     formGen->addRow("Історія графіку (точок):", m_chartHistory);
     formGen->addRow("Кулдаун сповіщень (сек):", m_cooldownSecs);
 
@@ -195,6 +197,7 @@ void SettingsDialog::loadFromManager()
     if (promptIdx != -1) m_processPromptLevel->setCurrentIndex(promptIdx);
     
     m_showTrustLevel->setChecked(m_settings->showTrustLevel);
+    m_enableNetworkScanner->setChecked(m_settings->enableNetworkScanner);
 
     m_logSavePath->setText(m_settings->logSavePath);
     m_watchedFoldersList->clear();
@@ -228,6 +231,7 @@ void SettingsDialog::saveSettings()
     m_settings->appTheme          = m_appTheme->currentData().toString();
     m_settings->processPromptLevel= m_processPromptLevel->currentData().toInt();
     m_settings->showTrustLevel    = m_showTrustLevel->isChecked();
+    m_settings->enableNetworkScanner = m_enableNetworkScanner->isChecked();
 
     m_settings->logSavePath       = m_logSavePath->text();
     QStringList folders;
