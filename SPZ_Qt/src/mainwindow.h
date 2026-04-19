@@ -29,6 +29,7 @@ public:
 
 protected:
     bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void updateProcesses(const std::vector<ProcessData>& processes);
@@ -57,6 +58,7 @@ private:
     QTableWidget* m_anomaliesTable;  // New anomalies UI
     QLabel*       m_healthScoreLabel;// Dynamic label
     QLabel*       m_noAnomaliesLabel;// Placeholder when empty
+    QPushButton*  m_settingsBtn = nullptr; // Overlay settings button
 
     QTableWidget* m_processTable;
     QTableWidget* m_sysInfoTable;

@@ -287,15 +287,36 @@ void MainWindow::setupUI()
 
     m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
 
-    // Corner widget for Settings — Segoe MDL2 Assets has a proper gear glyph (E713)
-    auto* btnSettings = new QPushButton(this);
+    // Corner widget for Settings — absolute positioned over the tab widget
+    // We will place it using an absolute layout or adjusting geometry in resizeEvent.
+    // Instead of using corner widget which can mess up layout on different OSes,
+    // let's create a dedicated top layout.
+    
+    // We actually need to change how the tab widget and button are laid out.
+    // Let's create an overlay button.
+    auto* btnSettings = new QPushButton(m_tabWidget); // Child of tab widget so it floats above
     btnSettings->setText(QString(QChar(0xE713)));
     btnSettings->setFont(QFont("Segoe MDL2 Assets", 12));
     btnSettings->setToolTip("Налаштування програми");
-    btnSettings->setFixedSize(36, 26);
-    btnSettings->setStyleSheet("QPushButton { padding: 0px; margin: 2px 4px 0px 0px; }");
+    btnSettings->setFixedSize(30, 26);
+    btnSettings->setStyleSheet(
+        "QPushButton { "
+        "  background: transparent; "
+        "  border: none; "
+        "  color: #888; "
+        "  font-size: 14px; "
+        "  margin: 0px; "
+        "  padding: 0px; "
+        "}"
+        "QPushButton:hover { color: #fff; background: #333; border-radius: 4px; }"
+    );
     connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
-    m_tabWidget->setCornerWidget(btnSettings, Qt::TopRightCorner);
+    
+    // To position it correctly, we need to handle it when the tab widget resizes.
+    // We can use an event filter to reposition it whenever the tab widget resizes.
+    m_tabWidget->installEventFilter(this);
+    // Store pointer so event filter can access it
+    m_settingsBtn = btnSettings;
 
     // Tab 1: Anomalies and Recommendations (NEW)
     m_tabWidget->addTab(buildAnomaliesTab(), "Аномалії та Поради");
@@ -635,6 +656,22 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
         }
     }
     return QMainWindow::nativeEvent(eventType, message, result);
+}
+
+// ─────────────────────────────── Event Filter ─────────────────────────
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_tabWidget && event->type() == QEvent::Resize && m_settingsBtn) {
+        // Position button in the top right corner of the tab widget,
+        // exactly where the tab bar ends.
+        int btnWidth = m_settingsBtn->width();
+        int btnHeight = m_settingsBtn->height();
+        
+        // Qt draws tabs at the top. We place the button on the far right.
+        m_settingsBtn->move(m_tabWidget->width() - btnWidth - 2, 2);
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 // ─────────────────────────────── Dynamic Theme ────────────────────────
