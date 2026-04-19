@@ -287,11 +287,13 @@ void MainWindow::setupUI()
 
     m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
 
-    // Corner widget for Settings — use Unicode gear (U+2699) which renders in all fonts
-    auto* btnSettings = new QPushButton(QString(QChar(0x2699)), this);
+    // Corner widget for Settings — Segoe MDL2 Assets has a proper gear glyph (E713)
+    auto* btnSettings = new QPushButton(this);
+    btnSettings->setText(QString(QChar(0xE713)));
+    btnSettings->setFont(QFont("Segoe MDL2 Assets", 12));
     btnSettings->setToolTip("Налаштування програми");
-    btnSettings->setFixedSize(32, 28);
-    btnSettings->setStyleSheet("font-size: 16px; padding: 0px;");
+    btnSettings->setFixedSize(36, 26);
+    btnSettings->setStyleSheet("QPushButton { padding: 0px; margin: 2px 4px 0px 0px; }");
     connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
     m_tabWidget->setCornerWidget(btnSettings, Qt::TopRightCorner);
 
