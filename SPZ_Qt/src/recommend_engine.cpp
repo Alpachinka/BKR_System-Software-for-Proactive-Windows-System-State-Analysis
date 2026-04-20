@@ -33,9 +33,10 @@ Recommendation RecommendEngine::buildFor(const Anomaly& a,
         r.longText   = "Система майже вичерпала доступну оперативну пам'ять. "
                        "Збережіть важливі дані та закрийте ресурсоємні програми "
                        "(браузери, ігри), щоб уникнути зависання системи.";
-        r.actionLabel = "";
-        r.action      = nullptr;
-        // Optionally, could add an action to pop up the top RAM consumers
+        r.actionLabel = "Відкрити 'Диспетчер завдань'";
+        r.action      = []() {
+            QDesktopServices::openUrl(QUrl("file:///C:/Windows/system32/taskmgr.exe"));
+        };
     }
     else if (a.type == "gpu_overload") {
         r.shortTitle = "Перевірте фонові задачі GPU";
@@ -69,8 +70,18 @@ Recommendation RecommendEngine::buildFor(const Anomaly& a,
         r.longText   = "Споживання ресурсів значно вище, ніж було в середньому за останню годину. "
                        "Це може означати фонове встановлення оновлень або запуск "
                        "запланованих завдань.";
-        r.actionLabel = "";
-        r.action      = nullptr;
+        r.actionLabel = "Відкрити 'Монітор ресурсів'";
+        r.action      = []() {
+            QDesktopServices::openUrl(QUrl("file:///C:/Windows/system32/resmon.exe"));
+        };
+    }
+    else if (a.type == "ransomware_suspected") {
+        r.shortTitle = "Перевірити антивірусом";
+        r.longText   = a.description; // Description is already very detailed
+        r.actionLabel = "Запустити Windows Defender";
+        r.action      = []() {
+            QDesktopServices::openUrl(QUrl("windowsdefender://threat/"));
+        };
     }
     else {
         r.shortTitle = "Зверніть увагу";

@@ -23,6 +23,9 @@ set(SOURCES
     src/backend.cpp
     src/backend.h
     src/process_info.h
+    src/anomaly_types.h
+    src/anomaly_dialogs.cpp
+    src/anomaly_dialogs.h
     src/database.cpp
     src/database.h
     src/baseline_tracker.cpp

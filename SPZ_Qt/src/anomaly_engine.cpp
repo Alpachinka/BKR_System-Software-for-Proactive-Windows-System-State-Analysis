@@ -175,3 +175,34 @@ void AnomalyEngine::recalcHealthScore(const SystemData& sys)
         emit healthScoreChanged(score);
     }
 }
+
+// ─────────────────────── File System analysis ──────────────────────────────
+
+void AnomalyEngine::analyzeFileSystemEvent(const QString& path)
+{
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_fsEvents.enqueue(now);
+
+    // Remove events older than 30 seconds
+    while (!m_fsEvents.isEmpty() && now - m_fsEvents.head() > 30000) {
+        m_fsEvents.dequeue();
+    }
+
+    // Threshold: > 50 file changes within 30 seconds
+    if (m_fsEvents.size() > 50) {
+        // Prevent spamming — only emit once per minute
+        if (now - m_lastRansomwareAlertTime > 60000) {
+            Anomaly a;
+            a.type = "ransomware_suspected";
+            a.description = "⚠️ Можлива активність вірусу-шифрувальника (Ransomware)! Зафіксовано аномально високу кількість змін файлів (>50 за останні 30 с).\nРекомендовано заблокувати невідомі процеси та виконати антивірусне сканування.";
+            a.severity = 3; // CRITICAL
+            
+            // Note: We bypass emit_anomaly since we handle our own cooldown here
+            // to avoid string mapping overhead, but we could use emit_anomaly as well.
+            emit anomalyDetected(a);
+            
+            m_lastRansomwareAlertTime = now;
+        }
+    }
+}
+

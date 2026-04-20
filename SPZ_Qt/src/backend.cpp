@@ -45,6 +45,10 @@ Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomaly
     connect(worker, &FsWorker::fileEvent, this,
             [this](const QString& t, const QString& e, const QString& msg) {
                 emit fileSystemEventLogged(t, e, msg);
+                // Also send to Anomaly Engine for Ransomware heuristic
+                if (m_anomalyEngine) {
+                    m_anomalyEngine->analyzeFileSystemEvent(msg);
+                }
             });
 
     // Network watcher on a separate thread
@@ -59,6 +63,24 @@ Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomaly
                 emit networkEventLogged(t, e, msg);
             });
     connect(m_netWorker, &NetworkWorker::connectionsUpdated, this, &Backend::connectionsUpdated);
+
+    // Registry watcher on a separate thread
+    m_regThread = new QThread(this);
+    m_regWorker = new RegistryWorker();
+    m_regWorker->moveToThread(m_regThread);
+
+    connect(m_regThread, &QThread::started, m_regWorker, &RegistryWorker::doWork);
+    connect(m_regWorker, &RegistryWorker::startupChanged, this,
+            [this](const QString& action, const QString& name, const QString& path, const QString& hive) {
+                // Forward to UI slot
+                emit startupEntryChanged(action, name, path, hive);
+                // Also write to system log
+                QString details = QString("[%1] %2\nШлях: %3").arg(hive, name, path);
+                emit systemEventLogged(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
+                                       "Автозавантаження: " + action, details);
+            });
+    connect(m_regWorker, &RegistryWorker::startupSnapshotReady,
+            this, &Backend::startupSnapshotReady);
 }
 
 Backend::~Backend()
@@ -69,6 +91,10 @@ Backend::~Backend()
     m_netWorker->m_stop = true;
     m_netThread->quit();
     m_netThread->wait();
+
+    m_regWorker->m_stop = true;
+    m_regThread->quit();
+    m_regThread->wait();
 }
 
 void Backend::startMonitoring()
@@ -80,6 +106,7 @@ void Backend::startMonitoring()
     m_processLogTimer->start(2000);
     m_fsThread->start();
     m_netThread->start();
+    m_regThread->start();
 }
 
 QString Backend::GetCurrentTimeString()
@@ -451,6 +478,9 @@ static QString GetTcpStateString(DWORD state) {
 
 void NetworkWorker::doWork()
 {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
     HANDLE hIcmpFile = IcmpCreateFile();
     DWORD ipaddr = inet_addr("8.8.8.8");
     char sendData[32] = "Data Buffer";
@@ -527,7 +557,137 @@ void NetworkWorker::doWork()
 
     if (hIcmpFile != INVALID_HANDLE_VALUE) IcmpCloseHandle(hIcmpFile);
     free(replyBuffer);
+    WSACleanup();
 }
+
+// ───────────────── RegistryWorker (Startup Monitoring) ───────────
+
+static std::map<QString, QString> ReadRunKeyFrom(HKEY root, const wchar_t* subkey)
+{
+    std::map<QString, QString> entries;
+    HKEY hKey;
+    if (RegOpenKeyExW(root, subkey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return entries;
+
+    DWORD index = 0;
+    wchar_t valueName[16383];
+    DWORD valueNameSize;
+    DWORD type;
+    BYTE  data[2048];
+    DWORD dataSize;
+
+    while (true) {
+        valueNameSize = 16383;
+        dataSize      = sizeof(data);
+        LSTATUS ret = RegEnumValueW(hKey, index, valueName, &valueNameSize, nullptr, &type, data, &dataSize);
+        if (ret != ERROR_SUCCESS) break;
+        if (type == REG_SZ || type == REG_EXPAND_SZ) {
+            entries[QString::fromWCharArray(valueName)] =
+                QString::fromWCharArray(reinterpret_cast<wchar_t*>(data));
+        }
+        index++;
+    }
+    RegCloseKey(hKey);
+    return entries;
+}
+
+// Helper: compare two snapshots and emit signals for differences
+static void DiffAndEmit(RegistryWorker* w,
+                        const std::map<QString, QString>& before,
+                        const std::map<QString, QString>& after,
+                        const QString& hive)
+{
+    for (const auto& [name, path] : before)
+        if (after.find(name) == after.end())
+            emit w->startupChanged("Видалено", name, path, hive);
+
+    for (const auto& [name, path] : after) {
+        auto it = before.find(name);
+        if (it == before.end())
+            emit w->startupChanged("Додано", name, path, hive);
+        else if (it->second != path)
+            emit w->startupChanged("Змінено", name, path, hive);
+    }
+}
+
+void RegistryWorker::doWork()
+{
+    const wchar_t* hkcuPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const wchar_t* hklmPath = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+    // Read initial snapshot
+    auto hkcuEntries = ReadRunKeyFrom(HKEY_CURRENT_USER,  hkcuPath);
+    auto hklmEntries = ReadRunKeyFrom(HKEY_LOCAL_MACHINE, hklmPath);
+
+    // Emit initial snapshot for UI table
+    {
+        std::vector<StartupEntry> snapshot;
+        for (const auto& [name, path] : hkcuEntries)
+            snapshot.push_back({"HKCU", name, path});
+        for (const auto& [name, path] : hklmEntries)
+            snapshot.push_back({"HKLM", name, path});
+        emit startupSnapshotReady(snapshot);
+    }
+
+    // Open keys for change notifications
+    HKEY hKeyHkcu = nullptr, hKeyHklm = nullptr;
+    RegOpenKeyExW(HKEY_CURRENT_USER,  hkcuPath, 0, KEY_NOTIFY | KEY_READ, &hKeyHkcu);
+    RegOpenKeyExW(HKEY_LOCAL_MACHINE, hklmPath, 0, KEY_NOTIFY | KEY_READ, &hKeyHklm);
+
+    HANDLE hEvtHkcu = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE hEvtHklm = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+    auto reRegister = [&]() {
+        if (hKeyHkcu && hEvtHkcu)
+            RegNotifyChangeKeyValue(hKeyHkcu, FALSE,
+                REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, hEvtHkcu, TRUE);
+        if (hKeyHklm && hEvtHklm)
+            RegNotifyChangeKeyValue(hKeyHklm, FALSE,
+                REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, hEvtHklm, TRUE);
+    };
+
+    reRegister();
+
+    HANDLE handles[2] = { hEvtHkcu, hEvtHklm };
+    DWORD  handleCount = (hEvtHkcu && hEvtHklm) ? 2 : 1;
+
+    while (!m_stop) {
+        DWORD waitRes = WaitForMultipleObjects(handleCount, handles, FALSE, 1000);
+
+        if (waitRes == WAIT_OBJECT_0 && hEvtHkcu) {          // HKCU changed
+            auto fresh = ReadRunKeyFrom(HKEY_CURRENT_USER, hkcuPath);
+            DiffAndEmit(this, hkcuEntries, fresh, "HKCU");
+            hkcuEntries = fresh;
+
+            // Re-emit full snapshot
+            std::vector<StartupEntry> snapshot;
+            for (const auto& [n, p] : hkcuEntries) snapshot.push_back({"HKCU", n, p});
+            for (const auto& [n, p] : hklmEntries) snapshot.push_back({"HKLM", n, p});
+            emit startupSnapshotReady(snapshot);
+
+            ResetEvent(hEvtHkcu);
+            reRegister();
+        } else if (waitRes == WAIT_OBJECT_0 + 1 && hEvtHklm) { // HKLM changed
+            auto fresh = ReadRunKeyFrom(HKEY_LOCAL_MACHINE, hklmPath);
+            DiffAndEmit(this, hklmEntries, fresh, "HKLM");
+            hklmEntries = fresh;
+
+            std::vector<StartupEntry> snapshot;
+            for (const auto& [n, p] : hkcuEntries) snapshot.push_back({"HKCU", n, p});
+            for (const auto& [n, p] : hklmEntries) snapshot.push_back({"HKLM", n, p});
+            emit startupSnapshotReady(snapshot);
+
+            ResetEvent(hEvtHklm);
+            reRegister();
+        }
+    }
+
+    if (hEvtHkcu) CloseHandle(hEvtHkcu);
+    if (hEvtHklm) CloseHandle(hEvtHklm);
+    if (hKeyHkcu) RegCloseKey(hKeyHkcu);
+    if (hKeyHklm) RegCloseKey(hKeyHklm);
+}
+
 
 // ───────────────── Network COM handler ─────────────────────────────
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <QQueue>
 #include <QMap>
 #include <QDateTime>
 #include "process_info.h"
@@ -19,6 +20,7 @@ public:
 
     void analyzeProcesses(const std::vector<ProcessData>& procs);
     void analyzeSystem(const SystemData& sys);
+    void analyzeFileSystemEvent(const QString& path);
 
     // Calculate overall health score 0–100
     int healthScore() const { return m_healthScore; }
@@ -41,6 +43,10 @@ private:
     int  m_ramHighTicks       = 0;
     int  m_gpuSpikeSeconds    = 0;
     int  m_baselineHighTicks  = 0;
+
+    // ── Ransomware / FS tracking ─────────────────────────────────────────
+    QQueue<qint64> m_fsEvents;
+    qint64 m_lastRansomwareAlertTime = 0;
 
     // ── Cooldown: avoid spamming the same anomaly ─────────────────────────
     // Maps anomaly key (type + processName) → last emit time

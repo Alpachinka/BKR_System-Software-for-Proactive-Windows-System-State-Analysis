@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "settings_dialog.h"
+#include "anomaly_dialogs.h"
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
@@ -46,6 +47,8 @@ MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* an
     connect(m_anomalyEngine, &AnomalyEngine::healthScoreChanged, this, &MainWindow::updateHealthScore);
     connect(m_alerts, &AlertManager::alertsChanged, this, &MainWindow::refreshAnomaliesUI);
     connect(m_backend, &Backend::connectionsUpdated, this, &MainWindow::updateNetworkConnections);
+    connect(m_backend, &Backend::startupSnapshotReady, this, &MainWindow::refreshStartupTable);
+    connect(m_backend, &Backend::startupEntryChanged, this, &MainWindow::onStartupChanged);
 
     connect(m_btnSave,  &QPushButton::clicked, this, &MainWindow::saveLogsToCsv);
     connect(m_btnClear, &QPushButton::clicked, this, &MainWindow::clearCurrentLog);
@@ -125,17 +128,28 @@ QWidget* MainWindow::buildAnomaliesTab()
     m_healthScoreLabel = new QLabel("Health Score: 100/100", this);
     m_healthScoreLabel->setStyleSheet("font-weight: bold; color: #a5d6a7; font-size: 14px;");
 
-    auto* btnAckAll = new QPushButton("Прийняти всі", this);
+    auto* btnAckAll = new QPushButton("Ігнорувати всі", this);
     connect(btnAckAll, &QPushButton::clicked, this, &MainWindow::ackAllAnomalies);
+
+    auto* btnHelp = new QPushButton("ℹ️ Довідка по аномаліям", this);
+    btnHelp->setStyleSheet("background: #0078d7; padding: 4px 10px; font-weight: bold; border-radius: 4px;");
+    connect(btnHelp, &QPushButton::clicked, this, [this]() {
+        AnomaliesHelpDialog dlg(this);
+        dlg.exec();
+    });
 
     topBar->addWidget(m_healthScoreLabel);
     topBar->addStretch();
+    topBar->addWidget(btnHelp);
     topBar->addWidget(btnAckAll);
     lay->addLayout(topBar);
 
     m_anomaliesTable = new QTableWidget(0, 4, this);
     m_anomaliesTable->setHorizontalHeaderLabels({"Тип", "Опис", "Критичність", "Дія"});
+    m_anomaliesTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_anomaliesTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_anomaliesTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_anomaliesTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_anomaliesTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_anomaliesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     lay->addWidget(m_anomaliesTable, 1);
@@ -291,6 +305,53 @@ QWidget* MainWindow::buildNetworkTab()
     return tab;
 }
 
+// ─────────────────────────────── Startup tab ───────────────────────
+
+QWidget* MainWindow::buildStartupTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay = new QVBoxLayout(tab);
+    lay->setSpacing(8);
+    lay->setContentsMargins(10, 10, 10, 10);
+
+    // Header row
+    auto* headerRow = new QHBoxLayout();
+    QLabel* title = new QLabel("Моніторинг Автозавантаження", this);
+    title->setStyleSheet("font-size: 18px; font-weight: bold;");
+    headerRow->addWidget(title);
+    headerRow->addStretch();
+
+    QLabel* hint = new QLabel("📡 Зміни відстежуються в реальному часі (HKCU + HKLM)", this);
+    hint->setStyleSheet("color: #888; font-size: 12px;");
+    headerRow->addWidget(hint);
+    lay->addLayout(headerRow);
+
+    lay->addSpacing(4);
+
+    // Table
+    m_startupTable = new QTableWidget(0, 4, this);
+    m_startupTable->setHorizontalHeaderLabels({"Кущ (Hive)", "Назва запису", "Шлях / Команда", "Статус"});
+    m_startupTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_startupTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_startupTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_startupTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_startupTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_startupTable->setSortingEnabled(true);
+    m_startupTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_startupTable->setAlternatingRowColors(true);
+    lay->addWidget(m_startupTable, 1);
+
+    // Info label at bottom
+    QLabel* info = new QLabel(
+        "ℹ️  Записи в HKLM мають право на зміну лише адміністратори. "
+        "Поява нових записів — можливий признак шкідливого ПЗ.", this);
+    info->setWordWrap(true);
+    info->setStyleSheet("color: #aaa; font-size: 12px; padding: 4px;");
+    lay->addWidget(info);
+
+    return tab;
+}
+
 // ─────────────────────────────── Security tab ─────────────────────────
 
 QWidget* MainWindow::buildSecurityTab()
@@ -382,101 +443,135 @@ void MainWindow::setupUI()
     mainLay->setContentsMargins(6, 6, 6, 6);
     mainLay->setSpacing(4);
 
+    // ── Outer tab widget (3 groups) ────────────────────────────────────
     m_tabWidget = new QTabWidget(this);
+    m_tabWidget->setDocumentMode(false);
     mainLay->addWidget(m_tabWidget, 1);
 
-    // Tab 0: Processes
-    m_processTable = new QTableWidget(0, 4, this);
-    m_processTable->setHorizontalHeaderLabels({"Ім'я процесу", "Пам'ять (МБ)", "CPU (%)", "Довіра"});
-    m_processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    m_processTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_processTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_processTable->setSortingEnabled(true);
-    m_processTable->setColumnHidden(3, !m_settings->showTrustLevel);
+    // Shared stylesheet for inner (nested) tab widgets
+    const QString innerStyle =
+        "QTabWidget::pane { border: 1px solid #333; }"
+        "QTabBar::tab { padding: 5px 16px; margin-right: 2px; border-radius: 4px 4px 0 0; background: #2b2b2b; color: #aaa; }"
+        "QTabBar::tab:selected { background: #3a3f4b; color: #fff; font-weight: bold; }"
+        "QTabBar::tab:hover { background: #35393f; color: #ddd; }";
 
-    // Context Menu for Process Table
-    m_processTable->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_processTable, &QTableWidget::customContextMenuRequested, this, &MainWindow::showProcessContextMenu);
+    // ══════════════════════════════════════════════════
+    //  TAB 1 — 📊 МОНІТОРИНГ
+    // ══════════════════════════════════════════════════
+    {
+        QWidget* monWidget = new QWidget(this);
+        auto* monLay = new QVBoxLayout(monWidget);
+        monLay->setContentsMargins(4, 6, 4, 4);
+        monLay->setSpacing(0);
 
-    m_tabWidget->addTab(m_processTable, "Процеси (Активні)");
+        auto* monTabs = new QTabWidget(monWidget);
+        monTabs->setStyleSheet(innerStyle);
+        monLay->addWidget(monTabs);
 
-    // Corner widget for Settings — absolute positioned over the tab widget
-    // We will place it using an absolute layout or adjusting geometry in resizeEvent.
-    // Instead of using corner widget which can mess up layout on different OSes,
-    // let's create a dedicated top layout.
-    
-    // We actually need to change how the tab widget and button are laid out.
-    // Let's create an overlay button.
-    auto* btnSettings = new QPushButton(m_tabWidget); // Child of tab widget so it floats above
-    btnSettings->setText(QString(QChar(0x2699))); // Standard Unicode gear, works everywhere
+        // ── Sub-tab: Процеси ────────────────────────
+        m_processTable = new QTableWidget(0, 4, this);
+        m_processTable->setHorizontalHeaderLabels({"Ім'я процесу", "Пам'ять (МБ)", "CPU (%)", "Довіра"});
+        m_processTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        m_processTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_processTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        m_processTable->setSortingEnabled(true);
+        m_processTable->setColumnHidden(3, !m_settings->showTrustLevel);
+        m_processTable->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_processTable, &QTableWidget::customContextMenuRequested,
+                this, &MainWindow::showProcessContextMenu);
+        monTabs->addTab(m_processTable, "🖥  Процеси");
+
+        // ── Sub-tab: Ресурси ────────────────────────
+        monTabs->addTab(buildSystemTab(), "📈  Ресурси");
+
+        // ── Sub-tab: Мережа ─────────────────────────
+        monTabs->addTab(buildNetworkTab(), "🌐  Мережа");
+
+        m_tabWidget->addTab(monWidget, "📊  Моніторинг");
+    }
+
+    // ══════════════════════════════════════════════════
+    //  TAB 2 — 🛡 БЕЗПЕКА
+    // ══════════════════════════════════════════════════
+    {
+        QWidget* secWidget = new QWidget(this);
+        auto* secLay = new QVBoxLayout(secWidget);
+        secLay->setContentsMargins(4, 6, 4, 4);
+        secLay->setSpacing(0);
+
+        auto* secTabs = new QTabWidget(secWidget);
+        secTabs->setStyleSheet(innerStyle);
+        secLay->addWidget(secTabs);
+
+        // ── Sub-tab: Аномалії ───────────────────────
+        secTabs->addTab(buildAnomaliesTab(), "⚠  Аномалії та Поради");
+
+        // ── Sub-tab: Аудит безпеки ──────────────────
+        secTabs->addTab(buildSecurityTab(), "🔒  Аудит Безпеки");
+
+        // ── Sub-tab: Автозавантаження ───────────────
+        secTabs->addTab(buildStartupTab(), "🚀  Автозавантаження");
+        // Store pointer to secTabs so onStartupChanged can flash the tab
+        m_securityTabWidget = secTabs;
+
+        m_tabWidget->addTab(secWidget, "🛡  Безпека");
+    }
+
+    // ══════════════════════════════════════════════════
+    //  TAB 3 — 📋 ЛОГИ
+    // ══════════════════════════════════════════════════
+    {
+        QWidget* logsTab = new QWidget(this);
+        auto* logsLay = new QVBoxLayout(logsTab);
+        logsLay->setContentsMargins(4, 6, 4, 4);
+        logsLay->setSpacing(4);
+
+        m_logsTabWidget = new QTabWidget(logsTab);
+        m_logsTabWidget->setStyleSheet(innerStyle);
+
+        m_processLogTable = createLogTable();
+        m_logsTabWidget->addTab(m_processLogTable, "📋  Процеси");
+
+        m_sysLogTable = createLogTable();
+        m_logsTabWidget->addTab(m_sysLogTable, "🖥  Система");
+
+        m_networkLogTable = createLogTable();
+        m_logsTabWidget->addTab(m_networkLogTable, "🌐  Мережа");
+
+        m_fileLogTable = createLogTable();
+        m_logsTabWidget->addTab(m_fileLogTable, "📁  Файли");
+
+        logsLay->addWidget(m_logsTabWidget, 1);
+
+        // Save/Clear buttons only visible in Logs tab
+        auto* btnLay = new QHBoxLayout();
+        btnLay->addStretch();
+        m_btnClear = new QPushButton("Очистити", this);
+        m_btnSave  = new QPushButton("💾  Зберегти CSV", this);
+        btnLay->addWidget(m_btnClear);
+        btnLay->addWidget(m_btnSave);
+        logsLay->addLayout(btnLay);
+
+        m_tabWidget->addTab(logsTab, "📋  Логи");
+    }
+
+    // ── Settings overlay button ───────────────────────────────────────
+    auto* btnSettings = new QPushButton(m_tabWidget);
+    btnSettings->setText(QString(QChar(0x2699)));
     btnSettings->setToolTip("Налаштування програми");
     btnSettings->setFixedSize(30, 26);
     btnSettings->setStyleSheet(
-        "QPushButton { "
-        "  background: transparent; "
-        "  border: none; "
-        "  color: #888; "
-        "  font-family: 'Segoe UI Symbol', 'Segoe UI', Arial; "
-        "  font-size: 16px; "
-        "  margin: 0px; "
-        "  padding: 0px; "
-        "}"
+        "QPushButton { background: transparent; border: none; color: #888; "
+        "font-family: 'Segoe UI Symbol', 'Segoe UI', Arial; font-size: 16px; "
+        "margin: 0px; padding: 0px; }"
         "QPushButton:hover { color: #fff; background: #333; border-radius: 4px; }"
     );
     connect(btnSettings, &QPushButton::clicked, this, &MainWindow::showSettingsDialog);
-    
-    // To position it correctly, we need to handle it when the tab widget resizes.
-    // We can use an event filter to reposition it whenever the tab widget resizes.
     m_tabWidget->installEventFilter(this);
-    // Store pointer so event filter can access it
     m_settingsBtn = btnSettings;
 
-    // Tab 1: Anomalies and Recommendations (NEW)
-    m_tabWidget->addTab(buildAnomaliesTab(), "Аномалії та Поради");
-
-    // Tab 2: System
-    m_tabWidget->addTab(buildSystemTab(), "Системні Ресурси");
-
-    // Tab 3: Network
-    m_tabWidget->addTab(buildNetworkTab(), "Мережа");
-
-    // Tab 4: Security
-    m_tabWidget->addTab(buildSecurityTab(), "Аудит Безпеки");
-
-    // Tab 5: Logs (with inner sub-tabs)
-    QWidget* logsTab = new QWidget(this);
-    auto* logsLay    = new QVBoxLayout(logsTab);
-    logsLay->setContentsMargins(4, 6, 4, 4);
-
-    m_logsTabWidget = new QTabWidget(logsTab);
-    m_logsTabWidget->setTabPosition(QTabWidget::North);
-
-    m_processLogTable = createLogTable();
-    m_logsTabWidget->addTab(m_processLogTable, "📋  Процеси");
-
-    m_sysLogTable = createLogTable();
-    m_logsTabWidget->addTab(m_sysLogTable,     "🖥  Система");
-
-    m_networkLogTable = createLogTable();
-    m_logsTabWidget->addTab(m_networkLogTable, "🌐  Мережа");
-
-    m_fileLogTable = createLogTable();
-    m_logsTabWidget->addTab(m_fileLogTable,    "📁  Файли");
-
-    logsLay->addWidget(m_logsTabWidget);
-    m_tabWidget->addTab(logsTab, "Логи");
-
-    // Bottom buttons
-    auto* btnLay = new QHBoxLayout();
-    btnLay->addStretch();
-    m_btnClear = new QPushButton("Очистити", this);
-    m_btnSave  = new QPushButton("Зберегти", this);
-    btnLay->addWidget(m_btnClear);
-    btnLay->addWidget(m_btnSave);
-    mainLay->addLayout(btnLay);
-
     setWindowTitle("SPZ: Системний Монітор  ·  Qt6 Edition");
-    resize(1000, 720);
+    resize(1100, 750);
 }
 
 QTableWidget* MainWindow::createLogTable()
@@ -542,6 +637,52 @@ void MainWindow::updateNetworkConnections(const std::vector<NetworkConnection>& 
         m_networkConnTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.pid)));
     }
     m_networkConnTable->setSortingEnabled(true);
+}
+
+void MainWindow::refreshStartupTable(const std::vector<StartupEntry>& entries)
+{
+    m_startupTable->setSortingEnabled(false);
+    m_startupTable->setRowCount(static_cast<int>(entries.size()));
+
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+        const auto& e = entries[i];
+
+        // Hive column — color-coded
+        auto* hiveItem = new QTableWidgetItem(e.hive);
+        if (e.hive == "HKLM")
+            hiveItem->setForeground(QBrush(QColor("#ffb74d"))); // orange = system-wide
+        else
+            hiveItem->setForeground(QBrush(QColor("#4fc3f7"))); // blue = user
+        m_startupTable->setItem(i, 0, hiveItem);
+
+        m_startupTable->setItem(i, 1, new QTableWidgetItem(e.name));
+        m_startupTable->setItem(i, 2, new QTableWidgetItem(e.path));
+
+        auto* statusItem = new QTableWidgetItem("✅ Активний");
+        statusItem->setForeground(QBrush(QColor("#81c784")));
+        m_startupTable->setItem(i, 3, statusItem);
+    }
+    m_startupTable->setSortingEnabled(true);
+}
+
+void MainWindow::onStartupChanged(const QString& action, const QString& name,
+                                   const QString& path, const QString& hive)
+{
+    QString icon = (action == "Додано") ? "🆕" : (action == "Видалено") ? "🗑" : "✏️";
+    QString fullAction = icon + " Автозавантаження " + action + " [" + hive + "]";
+
+    appendLog(m_sysLogTable,
+              QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"),
+              fullAction,
+              name + "\n" + path);
+
+    // If new entry added — visually flag the inner startup sub-tab
+    if (action == "Додано" && m_securityTabWidget) {
+        // Sub-tab index 2 = Автозавантаження
+        m_securityTabWidget->setTabText(2, "⚠  Автозавантаження");
+        // Also flag the outer Security tab
+        m_tabWidget->setTabText(1, "🛡  Безпека ⚠");
+    }
 }
 
 void MainWindow::updateSystemInfo(const SystemData& d)
@@ -625,26 +766,46 @@ void MainWindow::refreshAnomaliesUI()
         const auto& a = anomalies[i];
         Recommendation r = m_alerts->getRecommendation(a.id);
 
-        m_anomaliesTable->setItem(i, 0, new QTableWidgetItem(a.type));
-        m_anomaliesTable->setItem(i, 1, new QTableWidgetItem(a.description + "\n\nПорада: " + r.longText));
+        m_anomaliesTable->setItem(i, 0, new QTableWidgetItem(r.shortTitle.isEmpty() ? a.type : r.shortTitle));
+        m_anomaliesTable->setItem(i, 1, new QTableWidgetItem(a.description));
         m_anomaliesTable->setItem(i, 2, new QTableWidgetItem(a.severityLabel()));
 
-        // Make row bigger to fit text
-        m_anomaliesTable->setRowHeight(i, 80);
+        // Make row height standard
+        m_anomaliesTable->setRowHeight(i, 50);
 
         QWidget* btnWidget = new QWidget(this);
         auto* lay = new QHBoxLayout(btnWidget);
         lay->setContentsMargins(4, 4, 4, 4);
         
+        // "Details" button
+        QPushButton* detailsBtn = new QPushButton("Деталі...", btnWidget);
+        detailsBtn->setStyleSheet("background: #555; padding: 4px;");
+        connect(detailsBtn, &QPushButton::clicked, this, [this, a, r]() {
+            AnomalyDetailsDialog dlg(a, r, this);
+            connect(&dlg, &AnomalyDetailsDialog::actionTriggered, this, [this, id = a.id]() {
+                m_alerts->acknowledgeAnomaly(id);
+            });
+            connect(&dlg, &AnomalyDetailsDialog::acknowledgeTriggered, this, [this, id = a.id]() {
+                m_alerts->acknowledgeAnomaly(id);
+            });
+            dlg.exec();
+        });
+        lay->addWidget(detailsBtn);
+
+        // Optional quick action button (if has action)
         if (!r.actionLabel.isEmpty() && r.action) {
             QPushButton* actionBtn = new QPushButton(r.actionLabel, btnWidget);
             actionBtn->setStyleSheet(a.severity == 3 ? "background: #c62828;" : "background: #f57c00;");
-            connect(actionBtn, &QPushButton::clicked, this, r.action);
+            connect(actionBtn, &QPushButton::clicked, this, [this, r, id = a.id]() {
+                r.action();
+                m_alerts->acknowledgeAnomaly(id);
+            });
             lay->addWidget(actionBtn);
         }
 
-        QPushButton* ackBtn = new QPushButton("Прийняти", btnWidget);
-        ackBtn->setStyleSheet("background: #0e639c;");
+        // Quick Ignore button
+        QPushButton* ackBtn = new QPushButton("Ігнорувати", btnWidget);
+        ackBtn->setStyleSheet("background: #444;");
         connect(ackBtn, &QPushButton::clicked, this, [this, id = a.id]() {
             m_alerts->acknowledgeAnomaly(id);
         });

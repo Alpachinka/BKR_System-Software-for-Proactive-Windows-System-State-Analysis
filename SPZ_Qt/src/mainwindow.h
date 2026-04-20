@@ -46,6 +46,9 @@ private slots:
     void ackAllAnomalies();
 
     void showProcessContextMenu(const QPoint& pos);
+    void onStartupChanged(const QString& action, const QString& name,
+                          const QString& path, const QString& hive);
+    void refreshStartupTable(const std::vector<StartupEntry>& entries);
 
 private:
     Backend* m_backend;
@@ -53,8 +56,9 @@ private:
     AnomalyEngine* m_anomalyEngine;
     SettingsManager* m_settings;
 
-    QTabWidget*   m_tabWidget;       // outer
-    QTabWidget*   m_logsTabWidget;   // inner
+    QTabWidget*   m_tabWidget;          // outer (3 groups)
+    QTabWidget*   m_logsTabWidget;       // inner — logs
+    QTabWidget*   m_securityTabWidget;   // inner — security group
 
     QTableWidget* m_anomaliesTable;  // New anomalies UI
     QLabel*       m_healthScoreLabel;// Dynamic label
@@ -64,6 +68,7 @@ private:
     QTableWidget* m_processTable;
     QTableWidget* m_sysInfoTable;
     QTableWidget* m_networkConnTable;
+    QTableWidget* m_startupTable;
 
     QTableWidget* m_processLogTable;
     QTableWidget* m_sysLogTable;
@@ -92,6 +97,7 @@ private:
     QWidget*      buildSystemTab();
     QWidget*      buildNetworkTab();
     QWidget*      buildSecurityTab();
+    QWidget*      buildStartupTab();
     QWidget*      buildAnomaliesTab();
     void applyModernStyle();
 };

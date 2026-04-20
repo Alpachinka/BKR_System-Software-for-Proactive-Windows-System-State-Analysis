@@ -51,6 +51,24 @@ signals:
     void networkEventLogged(const QString& time, const QString& event, const QString& details);
 };
 
+// ─────────────────────── RegistryWorker ────────────────────
+struct StartupEntry {
+    QString hive;   // "HKCU" or "HKLM"
+    QString name;
+    QString path;
+};
+
+class RegistryWorker : public QObject {
+    Q_OBJECT
+public:
+    bool m_stop = false;
+    void doWork();
+signals:
+    void startupChanged(const QString& action, const QString& name,
+                        const QString& path, const QString& hive);
+    void startupSnapshotReady(const std::vector<StartupEntry>& entries);
+};
+
 // ─────────────────────── Backend ─────────────────────────
 class Backend : public QObject {
     Q_OBJECT
@@ -72,7 +90,9 @@ signals:
     void processesUpdated(const std::vector<ProcessData>& processes);
     void systemInfoUpdated(const SystemData& sysData);
     void connectionsUpdated(const std::vector<NetworkConnection>& conns);
-
+    void startupSnapshotReady(const std::vector<StartupEntry>& entries);
+    void startupEntryChanged(const QString& action, const QString& name,
+                             const QString& path, const QString& hive);
     void processEventLogged(const QString& time, const QString& event, const QString& details);
     void systemEventLogged(const QString& time, const QString& event, const QString& details);
     void networkEventLogged(const QString& time, const QString& event, const QString& details);
@@ -107,6 +127,8 @@ private:
     QThread* m_fsThread;
     QThread* m_netThread;
     NetworkWorker* m_netWorker;
+    QThread* m_regThread;
+    RegistryWorker* m_regWorker;
 
     // GPU via PDH
     PDH_HQUERY   m_gpuQuery     = nullptr;
