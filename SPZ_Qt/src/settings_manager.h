@@ -34,6 +34,14 @@ public:
     QStringList watchedFolders; // Folders for file watcher
     bool enableNetworkScanner;// Deep network scanning and ping
 
+    // New settings based on plan
+    int ransomwareThresholdEvents; // 50
+    int ransomwareThresholdTime;   // 30
+    QString pingServer;            // "8.8.8.8"
+    int pingMaxLatency;            // 500
+    int refreshIntervalMs;         // 1000
+    bool enableTrayNotifications;  // true
+
 signals:
     void settingsChanged();
 };

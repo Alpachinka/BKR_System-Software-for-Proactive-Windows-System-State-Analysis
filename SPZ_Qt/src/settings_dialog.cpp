@@ -36,16 +36,23 @@ void SettingsDialog::setupUI()
 
     m_showTrustLevel = new QCheckBox("Показувати довіру (System/User)", this);
     m_enableNetworkScanner = new QCheckBox("Увімкнути глибокий аналіз мережі", this);
+    m_enableTrayNotifications = new QCheckBox("Увімкнути системні сповіщення (Tray Notifications)", this);
     
     m_processPromptLevel = new QComboBox(this);
     m_processPromptLevel->addItem("На всіх процесах", 0);
     m_processPromptLevel->addItem("Лише на Системних/Важливих", 1);
     m_processPromptLevel->addItem("Ніколи (Вимкнути запит)", 2);
 
+    m_refreshIntervalMs = new QSpinBox(this);
+    m_refreshIntervalMs->setRange(100, 10000);
+    m_refreshIntervalMs->setSingleStep(100);
+
     formGen->addRow("Тема інтерфейсу:", m_appTheme);
+    formGen->addRow("Частота оновлення (мс):", m_refreshIntervalMs);
     formGen->addRow("Запит перед діями над процесом:", m_processPromptLevel);
     formGen->addRow("", m_showTrustLevel);
     formGen->addRow("", m_enableNetworkScanner);
+    formGen->addRow("", m_enableTrayNotifications);
     formGen->addRow("Історія графіку (точок):", m_chartHistory);
     formGen->addRow("Кулдаун сповіщень (сек):", m_cooldownSecs);
 
@@ -53,7 +60,8 @@ void SettingsDialog::setupUI()
 
     // ═══════════ Tab 2: Anomalies ═══════════
     QWidget* tabAnomalies = new QWidget();
-    QFormLayout* formAno = new QFormLayout(tabAnomalies);
+    QVBoxLayout* anoMainLay = new QVBoxLayout(tabAnomalies);
+    QFormLayout* formAno = new QFormLayout();
 
     m_cpuSpikeThreshold = new QDoubleSpinBox(this);
     m_cpuSpikeThreshold->setRange(1.0, 100.0);
@@ -73,6 +81,18 @@ void SettingsDialog::setupUI()
     m_diskLowGb = new QDoubleSpinBox(this);
     m_diskLowGb->setRange(0.1, 1000.0);
 
+    m_ransomwareThresholdEvents = new QSpinBox(this);
+    m_ransomwareThresholdEvents->setRange(1, 10000);
+    
+    m_ransomwareThresholdTime = new QSpinBox(this);
+    m_ransomwareThresholdTime->setRange(1, 3600);
+
+    // Group for Ransomware
+    auto* rwGroup = new QGroupBox("Ransomware (Евристика)", tabAnomalies);
+    auto* rwLay = new QFormLayout(rwGroup);
+    rwLay->addRow("К-сть змін файлів (поріг):", m_ransomwareThresholdEvents);
+    rwLay->addRow("Часове вікно (секунди):", m_ransomwareThresholdTime);
+
     formAno->addRow("Поріг CPU (%):", m_cpuSpikeThreshold);
     formAno->addRow("Секунд пікового CPU:", m_cpuSpikeTicks);
     formAno->addRow("Поріг RAM (%):", m_ramHighThreshold);
@@ -80,6 +100,10 @@ void SettingsDialog::setupUI()
     formAno->addRow("Поріг GPU (%):", m_gpuHighThreshold);
     formAno->addRow("Секунд пікового GPU:", m_gpuHighTicks);
     formAno->addRow("Критичний залишок Диску (ГБ):", m_diskLowGb);
+    
+    anoMainLay->addLayout(formAno);
+    anoMainLay->addWidget(rwGroup);
+    anoMainLay->addStretch();
 
     tabWidget->addTab(tabAnomalies, "Аномалії");
 
@@ -107,9 +131,19 @@ void SettingsDialog::setupUI()
 
     tabWidget->addTab(tabSys, "Аналіз");
 
-    // ═══════════ Tab 4: Paths (Шляхи) ═══════════
+    // ═══════════ Tab 4: Paths & Network ═══════════
     QWidget* tabPaths = new QWidget();
     auto* pathsLay = new QVBoxLayout(tabPaths);
+
+    // Network Ping
+    auto* netGroup = new QGroupBox("Аналізатор мережі", tabPaths);
+    auto* netLay = new QFormLayout(netGroup);
+    m_pingServer = new QLineEdit(this);
+    m_pingMaxLatency = new QSpinBox(this);
+    m_pingMaxLatency->setRange(10, 5000);
+    netLay->addRow("IP-адреса для пінгу:", m_pingServer);
+    netLay->addRow("Макс. допустимий пінг (мс):", m_pingMaxLatency);
+    pathsLay->addWidget(netGroup);
 
     // Log save path
     auto* logGroup = new QGroupBox("Збереження логів", tabPaths);
@@ -198,6 +232,14 @@ void SettingsDialog::loadFromManager()
     
     m_showTrustLevel->setChecked(m_settings->showTrustLevel);
     m_enableNetworkScanner->setChecked(m_settings->enableNetworkScanner);
+    m_enableTrayNotifications->setChecked(m_settings->enableTrayNotifications);
+    m_refreshIntervalMs->setValue(m_settings->refreshIntervalMs);
+
+    m_ransomwareThresholdEvents->setValue(m_settings->ransomwareThresholdEvents);
+    m_ransomwareThresholdTime->setValue(m_settings->ransomwareThresholdTime);
+    
+    m_pingServer->setText(m_settings->pingServer);
+    m_pingMaxLatency->setValue(m_settings->pingMaxLatency);
 
     m_logSavePath->setText(m_settings->logSavePath);
     m_watchedFoldersList->clear();
@@ -232,6 +274,14 @@ void SettingsDialog::saveSettings()
     m_settings->processPromptLevel= m_processPromptLevel->currentData().toInt();
     m_settings->showTrustLevel    = m_showTrustLevel->isChecked();
     m_settings->enableNetworkScanner = m_enableNetworkScanner->isChecked();
+    m_settings->enableTrayNotifications = m_enableTrayNotifications->isChecked();
+    m_settings->refreshIntervalMs = m_refreshIntervalMs->value();
+
+    m_settings->ransomwareThresholdEvents = m_ransomwareThresholdEvents->value();
+    m_settings->ransomwareThresholdTime   = m_ransomwareThresholdTime->value();
+    
+    m_settings->pingServer = m_pingServer->text();
+    m_settings->pingMaxLatency = m_pingMaxLatency->value();
 
     m_settings->logSavePath       = m_logSavePath->text();
     QStringList folders;

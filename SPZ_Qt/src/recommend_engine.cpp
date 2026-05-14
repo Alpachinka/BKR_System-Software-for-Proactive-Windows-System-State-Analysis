@@ -76,8 +76,9 @@ Recommendation RecommendEngine::buildFor(const Anomaly& a,
         };
     }
     else if (a.type == "ransomware_suspected") {
-        r.shortTitle = "Перевірити антивірусом";
-        r.longText   = a.description; // Description is already very detailed
+        r.shortTitle = "Можливий вірус-шифрувальник!";
+        r.longText   = "Швидкість зміни файлів вкрай висока. Це характерно для вірусів-шифрувальників (Ransomware). "
+                       "Рекомендовано негайно зупинити всі невідомі процеси та перевірити систему антивірусом.";
         r.actionLabel = "Запустити Windows Defender";
         r.action      = []() {
             QDesktopServices::openUrl(QUrl("windowsdefender://threat/"));

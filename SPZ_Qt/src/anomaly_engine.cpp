@@ -46,14 +46,30 @@ void AnomalyEngine::analyzeProcesses(const std::vector<ProcessData>& procs)
                 a.processPid  = p.pid;
                 a.severity    = 2;
                 a.description = QString(
-                    "Процес '%1' (PID %2) утримує навантаження на CPU %.1f%% "
+                    "Процес '%1' (PID %2) утримує навантаження на CPU %3% "
                     "протягом більш ніж 30 секунд.")
-                    .arg(p.name).arg(p.pid).arg(p.cpuUsagePercent);
+                    .arg(p.name)
+                    .arg(p.pid)
+                    .arg(p.cpuUsagePercent, 0, 'f', 1);
                 emit_anomaly(a);
             }
         } else {
             m_cpuHighTicks[p.pid] = 0;
         }
+    }
+
+    // Sort processes by RAM to find top 3
+    std::vector<ProcessData> sortedProcs = procs;
+    std::sort(sortedProcs.begin(), sortedProcs.end(), [](const ProcessData& a, const ProcessData& b) {
+        return a.memUsageMB > b.memUsageMB;
+    });
+
+    m_topRamProcs.clear();
+    for (int i = 0; i < std::min(3, (int)sortedProcs.size()); ++i) {
+        m_topRamProcs += QString("%1. %2 (%3 MB)\n")
+                         .arg(i + 1)
+                         .arg(sortedProcs[i].name)
+                         .arg(sortedProcs[i].memUsageMB, 0, 'f', 1);
     }
 }
 
@@ -69,12 +85,14 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
             a.type        = "ram_pressure";
             a.severity    = 3; // Critical
             a.description = QString(
-                "Використання RAM перевищує %1%% протягом останніх 5 хвилин "
+                "Використання RAM перевищує %1%% протягом довгого часу "
                 "(доступно лише %.1f ГБ із %.1f ГБ). "
-                "Система може стати нестабільною.")
+                "Система може стати нестабільною.\n\n"
+                "Найбільші споживачі пам'яті:\n%2")
                 .arg(sys.ramUsagePercent)
                 .arg(sys.availRamMB / 1024.0)
-                .arg(sys.totalRamMB / 1024.0);
+                .arg(sys.totalRamMB / 1024.0)
+                .arg(m_topRamProcs);
             emit_anomaly(a);
         }
     } else {
@@ -104,10 +122,10 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
         a.type        = "disk_low";
         a.severity    = 2;
         a.description = QString(
-            "На диску C: залишилось лише %.1f ГБ із %.1f ГБ. "
+            "На диску C: залишилось лише %1 ГБ із %2 ГБ. "
             "Рекомендовано очистити тимчасові файли або перенести дані.")
-            .arg(sys.freeDiskGB)
-            .arg(sys.totalDiskGB);
+            .arg(sys.freeDiskGB, 0, 'f', 1)
+            .arg(sys.totalDiskGB, 0, 'f', 1);
         emit_anomaly(a);
     }
 
@@ -133,9 +151,11 @@ void AnomalyEngine::analyzeSystem(const SystemData& sys)
                 else                      what = "RAM";
                 a.description = QString(
                     "Система демонструє аномально високе навантаження на %1 "
-                    "порівняно з базовою лінією (avg CPU: %.0f%%, avg RAM: %.0f%%). "
+                    "порівняно з базовою лінією (avg CPU: %2%, avg RAM: %3%). "
                     "Можлива підозріла фонова активність.")
-                    .arg(what).arg(avgCpu).arg(avgRam);
+                    .arg(what)
+                    .arg(avgCpu, 0, 'f', 0)
+                    .arg(avgRam, 0, 'f', 0);
                 emit_anomaly(a);
             }
         } else {
@@ -181,20 +201,36 @@ void AnomalyEngine::recalcHealthScore(const SystemData& sys)
 void AnomalyEngine::analyzeFileSystemEvent(const QString& path)
 {
     qint64 now = QDateTime::currentMSecsSinceEpoch();
-    m_fsEvents.enqueue(now);
+    m_fsEvents.enqueue({now, path});
 
-    // Remove events older than 30 seconds
-    while (!m_fsEvents.isEmpty() && now - m_fsEvents.head() > 30000) {
+    // Remove events older than configured threshold time
+    while (!m_fsEvents.isEmpty() && now - m_fsEvents.head().ts > m_settings->ransomwareThresholdTime * 1000) {
         m_fsEvents.dequeue();
     }
 
-    // Threshold: > 50 file changes within 30 seconds
-    if (m_fsEvents.size() > 50) {
+    // Threshold check using settings
+    if (m_fsEvents.size() > m_settings->ransomwareThresholdEvents) {
         // Prevent spamming — only emit once per minute
         if (now - m_lastRansomwareAlertTime > 60000) {
+            
+            // Extract up to 5 unique paths to show the user what's happening
+            QStringList recentFiles;
+            for (int i = m_fsEvents.size() - 1; i >= 0 && recentFiles.size() < 5; --i) {
+                QString fileMsg = m_fsEvents[i].path;
+                if (!recentFiles.contains(fileMsg)) {
+                    recentFiles.append(fileMsg);
+                }
+            }
+            
+            QString filesDetails = recentFiles.join("\n- ");
+            
             Anomaly a;
             a.type = "ransomware_suspected";
-            a.description = "⚠️ Можлива активність вірусу-шифрувальника (Ransomware)! Зафіксовано аномально високу кількість змін файлів (>50 за останні 30 с).\nРекомендовано заблокувати невідомі процеси та виконати антивірусне сканування.";
+            a.description = QString("Зафіксовано аномально високу кількість змін файлів (>%1 за останні %2 с).\n"
+                                    "Приклади порушених файлів:\n- %3")
+                                    .arg(m_settings->ransomwareThresholdEvents)
+                                    .arg(m_settings->ransomwareThresholdTime)
+                                    .arg(filesDetails);
             a.severity = 3; // CRITICAL
             
             // Note: We bypass emit_anomaly since we handle our own cooldown here

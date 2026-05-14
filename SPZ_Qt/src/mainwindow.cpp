@@ -361,9 +361,20 @@ QWidget* MainWindow::buildSecurityTab()
     lay->setSpacing(10);
     lay->setContentsMargins(16, 16, 16, 16);
 
+    auto* headerLay = new QHBoxLayout();
     QLabel* title = new QLabel("Аудит безпеки Windows", this);
     title->setStyleSheet("font-size: 20px; font-weight: bold; margin-bottom: 10px;");
-    lay->addWidget(title);
+    headerLay->addWidget(title);
+    headerLay->addStretch();
+    
+    QPushButton* btnRefresh = new QPushButton("🔄 Оновити", this);
+    btnRefresh->setCursor(Qt::PointingHandCursor);
+    btnRefresh->setStyleSheet("QPushButton { padding: 5px 15px; font-weight: bold; background: #3a3f4b; border: 1px solid #555; border-radius: 4px; }"
+                              "QPushButton:hover { background: #4a4f5b; }");
+    connect(btnRefresh, &QPushButton::clicked, this, &MainWindow::refreshSecurityTab);
+    headerLay->addWidget(btnRefresh);
+    
+    lay->addLayout(headerLay);
 
     int score = 0;
     int maxScore = 0;
@@ -430,6 +441,29 @@ QWidget* MainWindow::buildSecurityTab()
     lay->addStretch();
 
     return tab;
+}
+
+void MainWindow::refreshSecurityTab()
+{
+    if (!m_securityTabWidget) return;
+    
+    int index = 1; // "Аудит Безпеки"
+    QWidget* oldTab = m_securityTabWidget->widget(index);
+    if (!oldTab) return;
+    
+    m_securityTabWidget->blockSignals(true);
+    bool wasCurrent = (m_securityTabWidget->currentIndex() == index);
+    
+    QWidget* newTab = buildSecurityTab();
+    m_securityTabWidget->removeTab(index);
+    m_securityTabWidget->insertTab(index, newTab, "🔒  Аудит Безпеки");
+    
+    if (wasCurrent) {
+        m_securityTabWidget->setCurrentIndex(index);
+    }
+    
+    oldTab->deleteLater();
+    m_securityTabWidget->blockSignals(false);
 }
 
 // ─────────────────────────────── setupUI ──────────────────────────────
@@ -515,6 +549,19 @@ void MainWindow::setupUI()
         m_securityTabWidget = secTabs;
 
         m_tabWidget->addTab(secWidget, "🛡  Безпека");
+        
+        // Auto-refresh when opening the security tab
+        connect(secTabs, &QTabWidget::currentChanged, this, [this](int index) {
+            if (index == 1) { // 1 is "Аудит Безпеки"
+                refreshSecurityTab();
+            }
+        });
+        
+        connect(m_tabWidget, &QTabWidget::currentChanged, this, [this, secTabs](int index) {
+            if (index == 1 && secTabs->currentIndex() == 1) { // Outer is "Безпека", Inner is "Аудит Безпеки"
+                refreshSecurityTab();
+            }
+        });
     }
 
     // ══════════════════════════════════════════════════

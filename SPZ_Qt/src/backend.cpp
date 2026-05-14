@@ -24,7 +24,7 @@ static ULONGLONG FileTimeToULL(const FILETIME& ft)
 // ───────────────────────────── Backend ─────────────────────────────
 
 Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomalyEx, ProcessScanner* scanner, SettingsManager* settings, QObject *parent)
-    : QObject(parent), m_db(db), m_baseline(baseline), m_anomalyEngine(anomalyEx), m_scanner(scanner)
+    : QObject(parent), m_db(db), m_baseline(baseline), m_anomalyEngine(anomalyEx), m_scanner(scanner), m_settings(settings)
 {
     m_activeTimer = new QTimer(this);
     connect(m_activeTimer, &QTimer::timeout, this, &Backend::activeProcessLoop);
@@ -55,6 +55,8 @@ Backend::Backend(Database* db, BaselineTracker* baseline, AnomalyEngine* anomaly
     m_netThread = new QThread(this);
     m_netWorker = new NetworkWorker();
     m_netWorker->m_enableScanner = settings->enableNetworkScanner;
+    m_netWorker->m_pingServer = settings->pingServer;
+    m_netWorker->m_pingMaxLatency = settings->pingMaxLatency;
     m_netWorker->moveToThread(m_netThread);
 
     connect(m_netThread, &QThread::started, m_netWorker, &NetworkWorker::doWork);
@@ -101,9 +103,10 @@ void Backend::startMonitoring()
 {
     EnablePrivilege(SE_DEBUG_NAME);
     InitGpuPdh();
-    m_activeTimer->start(2000);
-    m_sysTimer->start(1000);
-    m_processLogTimer->start(2000);
+    int interval = m_settings->refreshIntervalMs;
+    m_activeTimer->start(interval);
+    m_sysTimer->start(interval);
+    m_processLogTimer->start(interval);
     m_fsThread->start();
     m_netThread->start();
     m_regThread->start();
@@ -482,7 +485,7 @@ void NetworkWorker::doWork()
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 
     HANDLE hIcmpFile = IcmpCreateFile();
-    DWORD ipaddr = inet_addr("8.8.8.8");
+    DWORD ipaddr = inet_addr(m_pingServer.toStdString().c_str());
     char sendData[32] = "Data Buffer";
     DWORD replySize = sizeof(ICMP_ECHO_REPLY) + sizeof(sendData);
     void* replyBuffer = malloc(replySize);
@@ -541,7 +544,7 @@ void NetworkWorker::doWork()
             if (ret != 0) {
                 PICMP_ECHO_REPLY pEchoReply = (PICMP_ECHO_REPLY)replyBuffer;
                 int latency = pEchoReply->RoundTripTime;
-                bool anomaly = (latency > 500); // 500ms threshold
+                bool anomaly = (latency > m_pingMaxLatency); // configurable threshold
                 emit pingResult(latency, 0.0, anomaly);
                 if (anomaly) {
                     emit networkEventLogged(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"), "Пінг", "Висока затримка мережі: " + QString::number(latency) + " ms");

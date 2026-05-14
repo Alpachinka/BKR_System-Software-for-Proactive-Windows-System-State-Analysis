@@ -44,6 +44,8 @@ class NetworkWorker : public QObject {
 public:
     bool m_enableScanner = true;
     bool m_stop = false;
+    QString m_pingServer = "8.8.8.8";
+    int m_pingMaxLatency = 500;
     void doWork();
 signals:
     void connectionsUpdated(const std::vector<NetworkConnection>& conns);
@@ -112,6 +114,7 @@ private:
     BaselineTracker* m_baseline;
     AnomalyEngine* m_anomalyEngine;
     ProcessScanner* m_scanner;
+    SettingsManager* m_settings;
 
     // Per-process CPU tracking
     std::map<DWORD, ULONGLONG> m_lastCPUTime;

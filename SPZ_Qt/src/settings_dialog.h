@@ -47,6 +47,13 @@ private:
     QCheckBox*      m_showTrustLevel;
     QCheckBox*      m_enableNetworkScanner;
 
+    QSpinBox*       m_ransomwareThresholdEvents;
+    QSpinBox*       m_ransomwareThresholdTime;
+    QLineEdit*      m_pingServer;
+    QSpinBox*       m_pingMaxLatency;
+    QSpinBox*       m_refreshIntervalMs;
+    QCheckBox*      m_enableTrayNotifications;
+
     QLineEdit*      m_logSavePath;
     QListWidget*    m_watchedFoldersList;
 

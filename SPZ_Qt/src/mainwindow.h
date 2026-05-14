@@ -44,6 +44,8 @@ private slots:
     void refreshAnomaliesUI();
     void updateHealthScore(int score);
     void ackAllAnomalies();
+    
+    void refreshSecurityTab();
 
     void showProcessContextMenu(const QPoint& pos);
     void onStartupChanged(const QString& action, const QString& name,

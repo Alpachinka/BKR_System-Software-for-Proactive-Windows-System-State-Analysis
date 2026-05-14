@@ -43,9 +43,15 @@ private:
     int  m_ramHighTicks       = 0;
     int  m_gpuSpikeSeconds    = 0;
     int  m_baselineHighTicks  = 0;
+    
+    QString m_topRamProcs; // Stores top 3 RAM consumers
 
     // ── Ransomware / FS tracking ─────────────────────────────────────────
-    QQueue<qint64> m_fsEvents;
+    struct FsEventRec {
+        qint64 ts;
+        QString path;
+    };
+    QQueue<FsEventRec> m_fsEvents;
     qint64 m_lastRansomwareAlertTime = 0;
 
     // ── Cooldown: avoid spamming the same anomaly ─────────────────────────

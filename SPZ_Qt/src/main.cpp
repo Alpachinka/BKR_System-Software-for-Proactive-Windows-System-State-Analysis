@@ -15,8 +15,18 @@
 #include "process_scanner.h"
 #include "alert_manager.h"
 
+#include <QSharedMemory>
+#include <QMessageBox>
+
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+
+    // Prevent multiple instances
+    QSharedMemory sharedMemory("ProactiveSystemMonitor_SPZ_Qt");
+    if (!sharedMemory.create(1)) {
+        QMessageBox::warning(nullptr, "Увага", "Програма вже запущена!\nПеревірте системний трей (область сповіщень біля годинника).");
+        return 0;
+    }
 
     // Init COM for the main thread (needed for Network manager)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);

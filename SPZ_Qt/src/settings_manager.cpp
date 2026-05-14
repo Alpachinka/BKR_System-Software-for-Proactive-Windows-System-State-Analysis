@@ -30,6 +30,13 @@ void SettingsManager::resetToDefaults()
     logSavePath       = "Logs";
     watchedFolders    = QStringList{"C:\\Users"};
     enableNetworkScanner = true;
+
+    ransomwareThresholdEvents = 50;
+    ransomwareThresholdTime   = 30;
+    pingServer                = "8.8.8.8";
+    pingMaxLatency            = 500;
+    refreshIntervalMs         = 1000;
+    enableTrayNotifications   = true;
 }
 
 void SettingsManager::load()
@@ -66,6 +73,15 @@ void SettingsManager::load()
     watchedFolders    = settings.value("watchedFolders", QStringList{"C:\\Users"}).toStringList();
     enableNetworkScanner = settings.value("enableNetworkScanner", true).toBool();
     settings.endGroup();
+
+    settings.beginGroup("Advanced");
+    ransomwareThresholdEvents = settings.value("ransomwareThresholdEvents", 50).toInt();
+    ransomwareThresholdTime   = settings.value("ransomwareThresholdTime", 30).toInt();
+    pingServer                = settings.value("pingServer", "8.8.8.8").toString();
+    pingMaxLatency            = settings.value("pingMaxLatency", 500).toInt();
+    refreshIntervalMs         = settings.value("refreshIntervalMs", 1000).toInt();
+    enableTrayNotifications   = settings.value("enableTrayNotifications", true).toBool();
+    settings.endGroup();
 }
 
 void SettingsManager::save()
@@ -101,6 +117,15 @@ void SettingsManager::save()
     settings.setValue("logSavePath", logSavePath);
     settings.setValue("watchedFolders", watchedFolders);
     settings.setValue("enableNetworkScanner", enableNetworkScanner);
+    settings.endGroup();
+
+    settings.beginGroup("Advanced");
+    settings.setValue("ransomwareThresholdEvents", ransomwareThresholdEvents);
+    settings.setValue("ransomwareThresholdTime", ransomwareThresholdTime);
+    settings.setValue("pingServer", pingServer);
+    settings.setValue("pingMaxLatency", pingMaxLatency);
+    settings.setValue("refreshIntervalMs", refreshIntervalMs);
+    settings.setValue("enableTrayNotifications", enableTrayNotifications);
     settings.endGroup();
 
     emit settingsChanged();
