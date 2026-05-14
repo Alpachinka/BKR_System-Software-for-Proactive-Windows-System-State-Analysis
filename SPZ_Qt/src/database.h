@@ -34,6 +34,7 @@ public:
     // Baseline queries
     double getAverageCpu(int lastMinutes = 60);
     double getAverageRam(int lastMinutes = 60);
+    int getCrashCount(int lastDays = 7);
 
 private:
     QSqlDatabase m_db;

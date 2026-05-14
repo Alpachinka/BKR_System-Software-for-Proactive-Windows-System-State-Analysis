@@ -1,5 +1,12 @@
 #include "anomaly_engine.h"
+#include "database.h"
+#include "hardware_monitor.h"
 #include <QUuid>
+#include <QDebug>
+#include <QFile>
+#include <QDateTime>
+#include <QSet>
+#include <algorithm>
 
 AnomalyEngine::AnomalyEngine(BaselineTracker* baseline, SettingsManager* settings, QObject* parent)
     : QObject(parent), m_baseline(baseline), m_settings(settings) {}
@@ -242,3 +249,69 @@ void AnomalyEngine::analyzeFileSystemEvent(const QString& path)
     }
 }
 
+// ─────────────────────── Long term analytics ────────────────────────────────
+
+void AnomalyEngine::analyzeLongTermTrends(Database* db)
+{
+    if (!db) return;
+
+    // 1. Check RAM starvation over the last 3 days
+    double avgRam = db->getAverageRam(3 * 24 * 60);
+    if (avgRam > 85.0) {
+        Anomaly a;
+        a.type = "long_term_ram";
+        a.severity = 2; // Warning
+        a.processName = "Аналітика (RAM)";
+        a.description = QString("💡 Спостерігається постійна нестача оперативної пам'яті (середнє навантаження %1% за 3 дні). "
+                                "Система активно використовує файл підкачки, що уповільнює роботу. "
+                                "Рекомендується збільшити об'єм RAM або обмежити фонові процеси.").arg(avgRam, 0, 'f', 1);
+        emit anomalyDetected(a);
+    }
+
+    // 2. Check CPU bottleneck over the last 3 days
+    double avgCpu = db->getAverageCpu(3 * 24 * 60);
+    if (avgCpu > 80.0) {
+        Anomaly a;
+        a.type = "long_term_cpu";
+        a.severity = 2; // Warning
+        a.processName = "Аналітика (CPU)";
+        a.description = QString("⚠️ Процесор постійно працює на межі можливостей (середнє навантаження %1% за 3 дні). "
+                                "Перевірте фонові процеси або автозавантаження. Можливо, процесор є 'вузьким місцем'.").arg(avgCpu, 0, 'f', 1);
+        emit anomalyDetected(a);
+    }
+
+    // 3. Check frequent crashes over the last 7 days
+    int crashes = db->getCrashCount(7);
+    if (crashes >= 3) {
+        Anomaly a;
+        a.type = "frequent_crashes";
+        a.severity = 3; // Critical
+        a.processName = "Аналітика (Збої)";
+        a.description = QString("🛠 Система вкрай нестабільна. Зафіксовано %1 критичних збоїв за останній тиждень. "
+                                "Рекомендується провести стрес-тест комплектуючих, перевірити блок живлення та драйвери.").arg(crashes);
+        emit anomalyDetected(a);
+    }
+}
+
+void AnomalyEngine::onHardwareScanCompleted(const std::vector<HardwareComponent>& results)
+{
+    for (const auto& comp : results) {
+        if (comp.status != "OK" && comp.status != "Unknown") {
+            Anomaly a;
+            a.type = "hardware_degradation";
+            a.severity = (comp.status == "Critical") ? 3 : 2;
+            a.processName = "SMART (" + comp.name + ")";
+            a.description = QString("🚨 Увага! Комплектуюче '%1' сигналізує про деградацію або критичний стан (Статус: %2). "
+                                    "Терміново зробіть резервну копію даних, якщо це накопичувач!").arg(comp.name).arg(comp.status);
+            
+            // Apply cooldown (notify once per 24 hours per component)
+            QString key = a.type + "_" + comp.name;
+            QDateTime now = QDateTime::currentDateTime();
+            if (m_cooldown.contains(key) && m_cooldown[key].secsTo(now) < 86400) {
+                continue; // Skip if already notified today
+            }
+            m_cooldown[key] = now;
+            emit anomalyDetected(a);
+        }
+    }
+}

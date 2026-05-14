@@ -40,6 +40,10 @@ set(SOURCES
     src/alert_manager.h
     src/settings_manager.cpp
     src/settings_dialog.cpp
+    src/crash_monitor.cpp
+    src/crash_monitor.h
+    src/hardware_monitor.cpp
+    src/hardware_monitor.h
 )
 
 # Add executable
@@ -47,4 +51,4 @@ add_executable(SPZ_Qt WIN32 ${SOURCES})
 
 # Link libraries
 target_link_libraries(SPZ_Qt PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Charts Qt6::Sql Qt6::Network)
-target_link_libraries(SPZ_Qt PRIVATE pdh.lib psapi.lib iphlpapi.lib ws2_32.lib) # Windows Perf Counters + Network
+target_link_libraries(SPZ_Qt PRIVATE pdh.lib psapi.lib iphlpapi.lib ws2_32.lib wevtapi.lib) # Windows Perf Counters + Network + Event Log

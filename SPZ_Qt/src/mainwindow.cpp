@@ -24,6 +24,7 @@ using namespace Qt::StringLiterals;
 MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* anomalyEx, SettingsManager* settings, QWidget *parent)
     : QMainWindow(parent), m_backend(backend), m_alerts(alerts), m_anomalyEngine(anomalyEx), m_settings(settings)
 {
+    m_hwMonitor = new HardwareMonitor(this);
     setupUI();
     applyModernStyle();
 
@@ -46,6 +47,9 @@ MainWindow::MainWindow(Backend* backend, AlertManager* alerts, AnomalyEngine* an
 
     connect(m_anomalyEngine, &AnomalyEngine::healthScoreChanged, this, &MainWindow::updateHealthScore);
     connect(m_alerts, &AlertManager::alertsChanged, this, &MainWindow::refreshAnomaliesUI);
+    
+    // Connect hardware scan to anomaly engine for SMART degradation checks
+    connect(m_hwMonitor, &HardwareMonitor::scanCompleted, m_anomalyEngine, &AnomalyEngine::onHardwareScanCompleted);
     connect(m_backend, &Backend::connectionsUpdated, this, &MainWindow::updateNetworkConnections);
     connect(m_backend, &Backend::startupSnapshotReady, this, &MainWindow::refreshStartupTable);
     connect(m_backend, &Backend::startupEntryChanged, this, &MainWindow::onStartupChanged);
@@ -305,6 +309,62 @@ QWidget* MainWindow::buildNetworkTab()
     return tab;
 }
 
+// ─────────────────────────────── Hardware tab ──────────────────────────
+
+QWidget* MainWindow::buildHardwareTab()
+{
+    QWidget* tab = new QWidget(this);
+    auto* lay = new QVBoxLayout(tab);
+    lay->setSpacing(8);
+    lay->setContentsMargins(8, 8, 8, 8);
+
+    auto* headerLay = new QHBoxLayout();
+    QLabel* title = new QLabel("Апаратні комплектуючі (Аудит обладнання)", this);
+    title->setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 4px;");
+    headerLay->addWidget(title);
+    headerLay->addStretch();
+    
+    QPushButton* btnScan = new QPushButton("🔍 Сканувати", this);
+    btnScan->setStyleSheet("padding: 5px 15px; font-weight: bold;");
+    connect(btnScan, &QPushButton::clicked, this, [this]() {
+        m_hardwareTable->setRowCount(0);
+        m_hardwareTable->setSortingEnabled(false);
+        m_hwMonitor->scanHardwareAsync();
+    });
+    headerLay->addWidget(btnScan);
+    lay->addLayout(headerLay);
+
+    m_hardwareTable = new QTableWidget(0, 4, this);
+    m_hardwareTable->setHorizontalHeaderLabels({"Тип", "Назва моделі", "Деталі / Характеристики", "Статус"});
+    m_hardwareTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_hardwareTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_hardwareTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_hardwareTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_hardwareTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    lay->addWidget(m_hardwareTable, 1);
+    
+    // Connect monitor signal
+    connect(m_hwMonitor, &HardwareMonitor::scanCompleted, this, [this](const std::vector<HardwareComponent>& results) {
+        m_hardwareTable->setRowCount(results.size());
+        for (int i = 0; i < (int)results.size(); ++i) {
+            const auto& comp = results[i];
+            m_hardwareTable->setItem(i, 0, new QTableWidgetItem(comp.type));
+            m_hardwareTable->setItem(i, 1, new QTableWidgetItem(comp.name));
+            m_hardwareTable->setItem(i, 2, new QTableWidgetItem(comp.details));
+            
+            auto* statusItem = new QTableWidgetItem(comp.status);
+            if (comp.status == "OK") statusItem->setForeground(QBrush(QColor("#81c784")));
+            else if (comp.status == "Warning") statusItem->setForeground(QBrush(QColor("#ffb74d")));
+            else statusItem->setForeground(QBrush(QColor("#e57373")));
+            
+            m_hardwareTable->setItem(i, 3, statusItem);
+        }
+        m_hardwareTable->setSortingEnabled(true);
+    });
+
+    return tab;
+}
+
 // ─────────────────────────────── Startup tab ───────────────────────
 
 QWidget* MainWindow::buildStartupTab()
@@ -520,6 +580,9 @@ void MainWindow::setupUI()
 
         // ── Sub-tab: Мережа ─────────────────────────
         monTabs->addTab(buildNetworkTab(), "🌐  Мережа");
+
+        // ── Sub-tab: Комплектуючі ───────────────────
+        monTabs->addTab(buildHardwareTab(), "⚙️  Комплектуючі");
 
         m_tabWidget->addTab(monWidget, "📊  Моніторинг");
     }

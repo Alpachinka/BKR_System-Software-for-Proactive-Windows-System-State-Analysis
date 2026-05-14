@@ -20,6 +20,7 @@ class QChartView;
 #include "alert_manager.h"
 #include "anomaly_engine.h"
 #include "settings_manager.h"
+#include "hardware_monitor.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -71,6 +72,7 @@ private:
     QTableWidget* m_sysInfoTable;
     QTableWidget* m_networkConnTable;
     QTableWidget* m_startupTable;
+    QTableWidget* m_hardwareTable;
 
     QTableWidget* m_processLogTable;
     QTableWidget* m_sysLogTable;
@@ -81,6 +83,8 @@ private:
     QProgressBar* m_cpuProgress;
     QProgressBar* m_ramProgress;
     QProgressBar* m_gpuProgress;
+
+    HardwareMonitor* m_hwMonitor;
 
     // Single combined resource chart (CPU + RAM + GPU)
     QLineSeries* m_cpuSeries   = nullptr;
@@ -100,6 +104,7 @@ private:
     QWidget*      buildNetworkTab();
     QWidget*      buildSecurityTab();
     QWidget*      buildStartupTab();
+    QWidget*      buildHardwareTab();
     QWidget*      buildAnomaliesTab();
     void applyModernStyle();
 };

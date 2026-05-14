@@ -21,6 +21,10 @@ public:
     void analyzeProcesses(const std::vector<ProcessData>& procs);
     void analyzeSystem(const SystemData& sys);
     void analyzeFileSystemEvent(const QString& path);
+    void analyzeLongTermTrends(class Database* db);
+
+public slots:
+    void onHardwareScanCompleted(const std::vector<struct HardwareComponent>& results);
 
     // Calculate overall health score 0–100
     int healthScore() const { return m_healthScore; }

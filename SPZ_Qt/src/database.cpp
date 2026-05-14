@@ -198,3 +198,15 @@ double Database::getAverageRam(int lastMinutes)
         return q.value(0).toDouble();
     return -1.0;
 }
+
+int Database::getCrashCount(int lastDays)
+{
+    if (!m_db.isOpen()) return 0;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT COUNT(*) FROM anomalies "
+              "WHERE type = 'system_crash' AND detected_at >= datetime('now', :days)");
+    q.bindValue(":days", QString("-%1 days").arg(lastDays));
+    if (q.exec() && q.next())
+        return q.value(0).toInt();
+    return 0;
+}

@@ -14,6 +14,7 @@
 #include "recommend_engine.h"
 #include "process_scanner.h"
 #include "alert_manager.h"
+#include "crash_monitor.h"
 
 #include <QSharedMemory>
 #include <QMessageBox>
@@ -62,6 +63,20 @@ int main(int argc, char *argv[]) {
     });
 
     QObject::connect(&anomalyEngine, &AnomalyEngine::anomalyDetected, &alertManager, &AlertManager::onAnomalyDetected);
+
+    // Check for recent crashes (BSOD / unexpected power loss)
+    auto recentCrashes = CrashMonitor::getRecentCrashes();
+    for (const auto& crash : recentCrashes) {
+        Anomaly a;
+        a.type = "system_crash";
+        a.severity = 3; // Critical
+        a.processName = "Windows Kernel (" + crash.source + ")";
+        a.description = QString("%1\nЧас збою: %2\nКод події: %3").arg(crash.description).arg(crash.timeStr).arg(crash.eventId);
+        alertManager.onAnomalyDetected(a);
+    }
+
+    // Check for long-term trends using historical database data
+    anomalyEngine.analyzeLongTermTrends(&db);
 
     Backend backend(&db, &baseline, &anomalyEngine, &scanner, &settings);
     MainWindow window(&backend, &alertManager, &anomalyEngine, &settings);
